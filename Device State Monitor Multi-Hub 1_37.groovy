@@ -34,7 +34,7 @@ FEATURES:
 */
 
 definition(
-    name: "Device State Monitor Multi-Hub 1.37",
+    name: "Device State Monitor Multi-Hub 1.38",
     namespace: "John Land",
     author: "John Land via Claude AI and ChatGPT",
     description: "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -53,7 +53,7 @@ preferences {
 // ─────────────────────────────────────────────────────────────────────────────
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "", uninstall: true, install: true) {
+    dynamicPage(name: "mainPage", title: "Device State Monitor Multi-Hub", uninstall: true, install: true) {
 
         // ── Refresh + Report (TOP) ────────────────────────────────────────────
         section(title: "") {
@@ -70,7 +70,7 @@ def mainPage() {
         def hub1LabelVal       = settings["hub1Label"] ?: (location.name ?: "Hub 1")
         def h1OnCount          = (devsOn  ?: []).findAll { !it.isDisabled() }.size()
         def h1OffCount         = (devsOff ?: []).findAll { !it.isDisabled() }.size()
-        def hub1Title          = "Hub #1 – ${hub1LabelVal}"
+        def hub1Title          = "Device Selection for Hub #1 – ${hub1LabelVal}"
         if (showSectionDetails) hub1Title += buildSelSummary(h1OnCount, h1OffCount, (hub1HealthDevs ?: []).size())
 
         def hub1HealthActionVal  = settings["hub1HealthAction"]
@@ -187,7 +187,7 @@ def mainPage() {
                 case "unselAllHealth":h2HealthList = []; break
             }
         }
-        def hub2Title = "Hub #2 – ${hub2LabelVal}"
+        def hub2Title = "Device Selection for Hub #2 – ${hub2LabelVal}"
         if (showSectionDetails && hub2Enabled) hub2Title += buildSelSummary(h2OnList.size(), h2OffList.size(), h2HealthList.size())
 
         section(hideable: true, hidden: !hub2ActionOpen, title: hub2Title) {
@@ -275,7 +275,7 @@ def mainPage() {
                 case "unselAllHealth":h3HealthList = []; break
             }
         }
-        def hub3Title = "Hub #3 – ${hub3LabelVal}"
+        def hub3Title = "Device Selection for Hub #3 – ${hub3LabelVal}"
         if (showSectionDetails && hub3Enabled) hub3Title += buildSelSummary(h3OnList.size(), h3OffList.size(), h3HealthList.size())
 
         section(hideable: true, hidden: !hub3ActionOpen, title: hub3Title) {
@@ -609,9 +609,22 @@ private void loadHub1AllDevices() {
 
 String handler() {
     state.lastRun = new Date().format("yyyy-MM-dd hh:mm a", location.timeZone)
-    def report  = generateReportTables()
+    def scanStart = new Date().time
+    def report    = generateReportTables()
+    def totalMs   = new Date().time - scanStart
+    def totalMins = (totalMs / 60000).toInteger()
+    def totalSecs = ((totalMs % 60000) / 1000).toInteger()
+    def totalStr  = String.format("%d:%02d", totalMins, totalSecs)
+    def collectMs  = report.collectMs ?: 0
+    def renderMs   = totalMs - collectMs
+    def fmtMs = { long ms ->
+        def s = (ms / 1000).toInteger()
+        def t = ((ms % 1000) / 100).toInteger()
+        "${s}.${t}s"
+    }
+    def timingDetail = " [Data:${fmtMs(collectMs)}, Render:${fmtMs(renderMs)}]"
     def htmlOut = report.html
-    htmlOut    += "<br><small><i>Last run: ${state.lastRun}</i></small>"
+    htmlOut    += "<br><small><i>Last run: ${state.lastRun} (Scan time: ${totalStr}${timingDetail})</i></small>"
     htmlOut    += buildTableJS()
     return htmlOut
 }
@@ -1076,7 +1089,9 @@ private String buildHealthIssueLabel(String rawStatus, String rawHealthSt,
 // ─────────────────────────────────────────────────────────────────────────────
 
 private Map generateReportTables() {
+    def t0          = new Date().time
     def data        = collectAllDeviceStates()
+    def collectMs   = new Date().time - t0
     def onPool      = data.onPool
     def offPool     = data.offPool
     def healthPool  = data.healthPool
@@ -1128,7 +1143,7 @@ private Map generateReportTables() {
             (settings["activityThresholdHours"] ?: 24) as long)
     }
 
-    return [html: html]
+    return [html: html, collectMs: collectMs]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
