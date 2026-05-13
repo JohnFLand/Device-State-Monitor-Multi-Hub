@@ -1,6 +1,6 @@
 /*
 PURPOSE: Report switch device states across up to three Hubitat hubs,
-         with in-row toggle buttons to turn devices ON or OFF instantly.
+         with clickable State cells to turn devices ON or OFF instantly.
          Also reports devices that are OFFLINE, INACTIVE, NOT PRESENT,
          or whose last activity exceeds a configurable time threshold.
 
@@ -11,9 +11,10 @@ FEATURES:
       configured; falls back to a capability picker otherwise.
     * Hubs #2 & #3 queried via Maker API. Connection credentials are collapsible
       once configured.
-    * Toggle buttons in each table row: "Turn OFF" in the ON table, "Turn ON" in
-      the OFF table, and both "→ ON" / "→ OFF" in the Unknown table. Buttons use
-      fetch() with no page refresh; the row updates in-place optimistically.
+    * Clickable State cells in ON/OFF tables replace the old Action column: click
+      "ON" to turn a device off, click "OFF" to turn it on. Unknown-state devices
+      show → ON / → OFF mini-buttons embedded directly in the State cell.
+      The Action column has been removed from all switch tables.
     * Toggle commands for Hub #1 use a separate optional Maker API credential block.
       Toggle commands for Hubs #2 & #3 reuse their existing Maker API credentials.
     * Optional Unknown State table catches devices reporting neither on nor off.
@@ -34,14 +35,15 @@ FEATURES:
 */
 
 definition(
-    name: "Device State Monitor Multi-Hub 1.38",
+    name: "Device State Monitor Multi-Hub 1.41",
     namespace: "John Land",
     author: "John Land via Claude AI and ChatGPT",
     description: "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
     installOnOpen: true,
     category: "Convenience",
     iconUrl: "",
-    iconX2Url: ""
+    iconX2Url: "",
+    importUrl: "https://raw.githubusercontent.com/JohnFLand/Hubitat-Device-State-Monitor-Multi-Hub/refs/heads/main/Device_State_Monitor_Multi-Hub.groovy"
 )
 
 preferences {
@@ -53,7 +55,7 @@ preferences {
 // ─────────────────────────────────────────────────────────────────────────────
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "Device State Monitor Multi-Hub", uninstall: true, install: true) {
+    dynamicPage(name: "mainPage", title: "<b>${app.name}</b>", uninstall: true, install: true) {
 
         // ── Refresh + Report (TOP) ────────────────────────────────────────────
         section(title: "") {
@@ -75,14 +77,6 @@ def mainPage() {
 
         def hub1HealthActionVal  = settings["hub1HealthAction"]
         def hub1HealthActionOpen = (hub1HealthActionVal && hub1HealthActionVal != "none")
-        def h1HealthList         = normalizeSelectionList(settings["hub1SelectedHealthDevices"])
-        if (hub1HealthActionOpen) {
-            def stored = state["hub1AllDevices"] ?: []
-            switch (hub1HealthActionVal) {
-                case "selAllHealth":   h1HealthList = stored.collect { it.id.toString() }; break
-                case "unselAllHealth": h1HealthList = []; break
-            }
-        }
 
         section(hideable: true, hidden: !(hub1HealthActionOpen), title: hub1Title) {
             // Process hub1HealthAction inside the section so side-effects happen during render
@@ -92,12 +86,10 @@ def mainPage() {
                     case "load":
                         loadHub1AllDevices(); break
                     case "selAllHealth":
-                        // Sync both the enum (for display) and the capability.* input (for data access)
-                        app.updateSetting("hub1SelectedHealthDevices", [value: h1AllIds, type: "enum"])
+                        // Sync the capability.* input (used directly for data access)
                         app.updateSetting("hub1HealthDevs",            [value: h1AllIds, type: "capability"])
                         break
                     case "unselAllHealth":
-                        app.updateSetting("hub1SelectedHealthDevices", [value: [], type: "enum"])
                         app.updateSetting("hub1HealthDevs",            [value: [], type: "capability"])
                         break
                 }
@@ -502,6 +494,7 @@ void initialize() {
 }
 
 def appButtonHandler(btn) {
+    // Buttons intentionally just force a page re-render; handler() rebuilds the report.
     if (enableLogging) log.debug "Button pressed: ${btn}"
 }
 
@@ -577,7 +570,7 @@ private void loadHub1AllDevices() {
         state["hub1AllDevicesStatus"] = "Error: Hub #1 Maker API app ID and/or token not configured"
         return
     }
-    def hub1LocalIp = location.hubs[0].localIP
+    def hub1LocalIp = location.hubs?.getAt(0)?.localIP
     def uri         = "http://${hub1LocalIp}:8080/apps/api/${appId}/devices?access_token=${token}"
     def allList = []
     try {
@@ -1068,8 +1061,6 @@ private Date parseRemoteLastActivity(def laVal, String hubLabel, def devId) {
     return null
 }
 
-
-
 // ─────────────────────────────────────────────────────────────────────────────
 // HEALTH ISSUE LABEL BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1109,14 +1100,14 @@ private Map generateReportTables() {
 
     // ON table
     html += buildTable(onPool.findAll { it.switchVal == "on" },
-        "Devices that are ON", "table_on", "#cc0000", "ON", "color:red;font-weight:bold;",
+        "<b>Devices that are ON</b>", "table_on", "#cc0000", "ON", "color:red;font-weight:bold;",
         settings["sortByOn"] ?: "displayName", settings["sortOrderOn"] ?: "asc", "off",
         bothLinks, "Also monitored for OFF state")
 
     // OFF table
     html += "<br>"
     html += buildTable(offPool.findAll { it.switchVal == "off" },
-        "Devices that are OFF", "table_off", "#1a7a1a", "OFF", "color:#444;font-weight:bold;",
+        "<b>Devices that are OFF</b>", "table_off", "#1a7a1a", "OFF", "color:#444;font-weight:bold;",
         settings["sortByOff"] ?: "displayName", settings["sortOrderOff"] ?: "asc", "on",
         bothLinks, "Also monitored for ON state")
 
@@ -1129,7 +1120,7 @@ private Map generateReportTables() {
         }
         html += "<br>"
         html += buildTable(unkAll,
-            "Devices with Unknown State", "table_unk", "#888888", "Unknown", "color:#888;font-weight:bold;",
+            "<b>Devices with Unknown State</b>", "table_unk", "#888888", "Unknown", "color:#888;font-weight:bold;",
             settings["sortByUnk"] ?: "displayName", settings["sortOrderUnk"] ?: "asc", "both")
     }
 
@@ -1137,7 +1128,7 @@ private Map generateReportTables() {
     if (showHealth) {
         html += "<br>"
         html += buildHealthTable(healthPool,
-            "Health / Activity Monitor", "table_health", "#CC6600",
+            "<b>Health / Activity Monitor</b>", "table_health", "#CC6600",
             settings["sortByHealth"]    ?: "displayName",
             settings["sortOrderHealth"] ?: "asc",
             (settings["activityThresholdHours"] ?: 24) as long)
@@ -1172,26 +1163,27 @@ private String buildTable(List devices, String title, String tableId,
 
     if (count > 0) {
         html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
-        html += "<colgroup><col style='width:40%'><col style='width:20%'><col style='width:18%'><col style='width:7%'><col style='width:15%'></colgroup>"
+        def stateColWidth = (toggleCmd == "both") ? "22%" : "7%"
+        def nameColWidth  = (toggleCmd == "both") ? "40%" : "55%"
+        html += "<colgroup><col style='width:${nameColWidth}'><col style='width:20%'><col style='width:18%'><col style='width:${stateColWidth}'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",3)'>State</th>"
-        html += "<th style='cursor:default;'>Action</th>"
+        html += "<th style='cursor:default;'>State</th>"
         html += "</tr></thead><tbody>"
         devices.each { it ->
             html += "<tr>"
-            def inBoth = bothLinks?.contains(it.linkUrl)
+            def inBoth   = bothLinks?.contains(it.linkUrl)
+            def safeName = htmlEscape(it.displayName)
             def nameInner = inBoth
-                ? ("<span style='color:#cc6600;' title='${bothTooltip}'>${it.displayName}</span>"
+                ? ("<span style='color:#cc6600;' title='${bothTooltip}'>${safeName}</span>"
                    + "&nbsp;<small style='color:#cc6600;font-size:0.8em;'>&#x2605;</small>")
-                : it.displayName
+                : safeName
             html += "<td><a href='${it.linkUrl}' target='_blank'>${nameInner}</a></td>"
-            html += "<td>${it.room}</td>"
-            html += "<td class='hub-col'>${it.hub}</td>"
-            html += "<td class='state-col' style='${stateStyle}'>${stateLabel}</td>"
-            html += "<td class='action-col'>${buildToggleButton(it, toggleCmd)}</td>"
+            html += "<td>${htmlEscape(it.room)}</td>"
+            html += "<td class='hub-col'>${htmlEscape(it.hub)}</td>"
+            html += buildStateCell(it, toggleCmd, stateLabel, stateStyle)
             html += "</tr>"
         }
         html += "</tbody></table>"
@@ -1253,10 +1245,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
                 ? "color:red;font-weight:bold;text-align:center;white-space:nowrap;"
                 : "text-align:center;white-space:nowrap;"
             html += "<tr>"
-            html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
-            html += "<td>${it.room}</td>"
-            html += "<td class='hub-col'>${it.hub}</td>"
-            html += "<td style='${statusStyle}'>${it.status}</td>"
+            html += "<td><a href='${it.linkUrl}' target='_blank'>${htmlEscape(it.displayName)}</a></td>"
+            html += "<td>${htmlEscape(it.room)}</td>"
+            html += "<td class='hub-col'>${htmlEscape(it.hub)}</td>"
+            html += "<td style='${statusStyle}'>${htmlEscape(it.status)}</td>"
             html += "<td style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
             html += "<td style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
             html += "</tr>"
@@ -1267,38 +1259,42 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TOGGLE BUTTON BUILDER
+// STATE CELL BUILDER
 // ─────────────────────────────────────────────────────────────────────────────
 
-private String buildToggleButton(Map device, String toggleCmd) {
-    def onUrl  = device.toggleOnUrl  ?: ""
-    def offUrl = device.toggleOffUrl ?: ""
-
-    if (!onUrl && !offUrl) return "<span style='color:#ccc;'>—</span>"
-
-    def safeOn  = onUrl.replace("'", "\\'")
+private String buildStateCell(Map device, String toggleCmd, String stateLabel, String stateStyle) {
+    def onUrl   = device.toggleOnUrl  ?: ""
+    def offUrl  = device.toggleOffUrl ?: ""
+    def safeOn  = onUrl.replace("'",  "\\'")
     def safeOff = offUrl.replace("'", "\\'")
 
-    switch (toggleCmd) {
-        case "off":
-            return "<button class='toggle-btn' " +
-                   "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='on' " +
-                   "onclick='toggleDevice(this)'>Turn OFF</button>"
-
-        case "on":
-            return "<button class='toggle-btn' " +
-                   "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='off' " +
-                   "onclick='toggleDevice(this)'>Turn ON</button>"
-
-        case "both":
-        default:
-            def b1 = onUrl  ? "<button class='toggle-btn toggle-btn-sm' " +
-                               "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='unknown' " +
-                               "onclick='toggleDevice(this,\"on\")'  >→ ON</button>" : ""
-            def b2 = offUrl ? "<button class='toggle-btn toggle-btn-sm' " +
-                               "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='unknown' " +
-                               "onclick='toggleDevice(this,\"off\")' >→ OFF</button>" : ""
-            return b1 + (b1 && b2 ? "&nbsp;" : "") + b2
+    if (toggleCmd == "both") {
+        // Unknown-state table: embed both mini-buttons inside the state cell.
+        def b1 = onUrl  ? "<button class='toggle-btn toggle-btn-sm' " +
+                           "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='unknown' " +
+                           "onclick='toggleDevice(this,\"on\")'>→ ON</button>" : ""
+        def b2 = offUrl ? "<button class='toggle-btn toggle-btn-sm' " +
+                           "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='unknown' " +
+                           "onclick='toggleDevice(this,\"off\")'>→ OFF</button>" : ""
+        def btns = b1 + (b1 && b2 ? "&nbsp;" : "") + b2
+        if (btns) {
+            return "<td class='state-col'>${btns}</td>"
+        } else {
+            return "<td class='state-col' style='${stateStyle}'>${stateLabel}</td>"
+        }
+    } else {
+        // ON / OFF tables: the whole state cell is clickable.
+        def targetUrl = (toggleCmd == "off") ? offUrl : onUrl
+        if (targetUrl) {
+            def dataCurrent = (toggleCmd == "off") ? "on" : "off"
+            return "<td class='state-col state-clickable' " +
+                   "data-on-url='${safeOn}' data-off-url='${safeOff}' data-current='${dataCurrent}' " +
+                   "onclick='toggleStateCell(this)' " +
+                   "style='${stateStyle}cursor:pointer;'>" +
+                   "<span class='state-label'>${stateLabel}</span></td>"
+        } else {
+            return "<td class='state-col' style='${stateStyle}'>${stateLabel}</td>"
+        }
     }
 }
 
@@ -1332,7 +1328,7 @@ function sortOnTable(tableId, columnIndex) {
     rows.forEach(row => tbody.appendChild(row));
 }
 
-// ── Device toggle ─────────────────────────────────────────────────────────────
+// ── Device toggle (Unknown-table buttons) ────────────────────────────────────
 async function toggleDevice(btn, forceCmd) {
     const current   = btn.dataset.current;
     const targetCmd = forceCmd || (current === 'on' ? 'off' : 'on');
@@ -1346,25 +1342,8 @@ async function toggleDevice(btn, forceCmd) {
     try {
         const resp = await fetch(url);
         if (resp.ok) {
-            const row     = btn.closest('tr');
-            const stateTd = row.querySelector('.state-col');
-            if (current !== 'unknown') {
-                if (targetCmd === 'off') {
-                    stateTd.textContent = 'OFF';
-                    stateTd.style.cssText = 'color:#444;font-weight:bold;text-align:center;white-space:nowrap;';
-                    btn.dataset.current = 'off';
-                    btn.textContent = 'Turn ON';
-                } else {
-                    stateTd.textContent = 'ON';
-                    stateTd.style.cssText = 'color:red;font-weight:bold;text-align:center;white-space:nowrap;';
-                    btn.dataset.current = 'on';
-                    btn.textContent = 'Turn OFF';
-                }
-            } else {
-                btn.textContent = '✓ Sent';
-                setTimeout(() => { btn.textContent = originalText; }, 2000);
-            }
-            btn.disabled = false;
+            btn.textContent = '✓ Sent';
+            setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
         } else {
             btn.textContent = '⚠ ' + resp.status;
             setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 3000);
@@ -1372,6 +1351,48 @@ async function toggleDevice(btn, forceCmd) {
     } catch (err) {
         btn.textContent = '⚠ Error';
         setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 3000);
+    }
+}
+
+// ── Clickable state cell (ON / OFF tables) ────────────────────────────────────
+async function toggleStateCell(cell) {
+    if (cell.dataset.busy === 'true') return;
+    const current   = cell.dataset.current;
+    const targetCmd = current === 'on' ? 'off' : 'on';
+    const url       = cell.dataset[targetCmd + 'Url'];
+    if (!url) return;
+
+    cell.dataset.busy = 'true';
+    const lbl      = cell.querySelector('.state-label') || cell;
+    const savedTxt = lbl.textContent;
+    lbl.textContent    = '…';
+    cell.style.opacity = '0.5';
+    cell.style.cursor  = 'wait';
+
+    try {
+        const resp = await fetch(url);
+        if (resp.ok) {
+            if (targetCmd === 'off') {
+                lbl.textContent = 'OFF';
+                cell.style.cssText = 'color:#444;font-weight:bold;text-align:center;white-space:nowrap;cursor:pointer;';
+                cell.dataset.current = 'off';
+            } else {
+                lbl.textContent = 'ON';
+                cell.style.cssText = 'color:red;font-weight:bold;text-align:center;white-space:nowrap;cursor:pointer;';
+                cell.dataset.current = 'on';
+            }
+            cell.dataset.busy = 'false';
+        } else {
+            lbl.textContent    = '⚠ ' + resp.status;
+            cell.style.opacity = '1';
+            cell.style.cursor  = 'pointer';
+            setTimeout(() => { lbl.textContent = savedTxt; cell.dataset.busy = 'false'; }, 3000);
+        }
+    } catch (err) {
+        lbl.textContent    = '⚠ Err';
+        cell.style.opacity = '1';
+        cell.style.cursor  = 'pointer';
+        setTimeout(() => { lbl.textContent = savedTxt; cell.dataset.busy = 'false'; }, 3000);
     }
 }
 </script>
@@ -1389,7 +1410,7 @@ async function toggleDevice(btn, forceCmd) {
 .on-table th.sort-desc::after { content:' ▼'; font-size:0.8em; }
 .on-table td.state-col  { text-align:center; white-space:nowrap; width:1%; }
 .on-table td.hub-col    { white-space:nowrap; width:1%; }
-.on-table td.action-col { text-align:center; white-space:nowrap; }
+.on-table td.state-clickable:hover:not([data-busy='true']) { background-color:rgba(0,0,0,0.06); }
 .toggle-btn {
     font-size:0.8em; padding:2px 8px; cursor:pointer;
     border-radius:3px; border:1px solid #888;
@@ -1427,4 +1448,16 @@ private String resolveLocalRoom(def dev, Map roomMap) {
         } catch (ignore) {}
     }
     return roomName ?: "—"
+}
+
+// Escape user-supplied strings before inserting into generated HTML.
+// Prevents display glitches or broken markup if a device name, room name,
+// or hub label contains &, <, >, ", or '.
+private String htmlEscape(def v) {
+    return (v == null ? "" : v.toString())
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"',  "&quot;")
+        .replace("'",  "&#39;")
 }
