@@ -1,4 +1,6 @@
 /*
+Device State Monitor Multi-Hub
+
 PURPOSE: Report switch device states across up to three Hubitat hubs,
          with clickable State cells to turn devices ON or OFF instantly.
          Also reports devices that are OFFLINE, INACTIVE, NOT PRESENT,
@@ -35,15 +37,15 @@ FEATURES:
 */
 
 definition(
-    name: "Device State Monitor Multi-Hub 1.41",
-    namespace: "John Land",
-    author: "John Land via Claude AI and ChatGPT",
-    description: "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
+    name:         "Device State Monitor Multi-Hub 1.42",
+    namespace:    "John Land",
+    author:       "John Land via Claude AI and ChatGPT",
+    description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
     installOnOpen: true,
-    category: "Convenience",
-    iconUrl: "",
-    iconX2Url: "",
-    importUrl: "https://raw.githubusercontent.com/JohnFLand/Hubitat-Device-State-Monitor-Multi-Hub/refs/heads/main/Device_State_Monitor_Multi-Hub.groovy"
+    category:     "Convenience",
+    iconUrl:      "",
+    iconX2Url:    "",
+    importUrl:    "https://raw.githubusercontent.com/JohnFLand/Hubitat-Device-State-Monitor-Multi-Hub/refs/heads/main/Device_State_Monitor_Multi-Hub.groovy"
 )
 
 preferences {
@@ -77,6 +79,14 @@ def mainPage() {
 
         def hub1HealthActionVal  = settings["hub1HealthAction"]
         def hub1HealthActionOpen = (hub1HealthActionVal && hub1HealthActionVal != "none")
+        def h1HealthList         = normalizeSelectionList(settings["hub1SelectedHealthDevices"])
+        if (hub1HealthActionOpen) {
+            def stored = state["hub1AllDevices"] ?: []
+            switch (hub1HealthActionVal) {
+                case "selAllHealth":   h1HealthList = stored.collect { it.id.toString() }; break
+                case "unselAllHealth": h1HealthList = []; break
+            }
+        }
 
         section(hideable: true, hidden: !(hub1HealthActionOpen), title: hub1Title) {
             // Process hub1HealthAction inside the section so side-effects happen during render
@@ -86,10 +96,12 @@ def mainPage() {
                     case "load":
                         loadHub1AllDevices(); break
                     case "selAllHealth":
-                        // Sync the capability.* input (used directly for data access)
+                        // Sync both the enum (for display) and the capability.* input (for data access)
+                        app.updateSetting("hub1SelectedHealthDevices", [value: h1AllIds, type: "enum"])
                         app.updateSetting("hub1HealthDevs",            [value: h1AllIds, type: "capability"])
                         break
                     case "unselAllHealth":
+                        app.updateSetting("hub1SelectedHealthDevices", [value: [], type: "enum"])
                         app.updateSetting("hub1HealthDevs",            [value: [], type: "capability"])
                         break
                 }
@@ -118,7 +130,7 @@ def mainPage() {
             if (settings["hub1ShowToggle"]) {
                 paragraph("<i>Install Maker API on Hub #1, expose all desired devices, then enter the " +
                           "app ID and token below. These credentials are used both for in-row toggle " +
-                          "buttons <b>and</b> for loading the Health/Activity device list. " +
+                          "actions/buttons <b>and</b> for loading the Health/Activity device list. " +
                           "If left blank, toggle buttons will not appear and health Select All / Clear All " +
                           "will be unavailable (a capability picker is shown instead).</i>")
                 input "hub1AppId", "text", title: "Hub #1 Maker API app ID",       required: false, submitOnChange: true
@@ -494,7 +506,6 @@ void initialize() {
 }
 
 def appButtonHandler(btn) {
-    // Buttons intentionally just force a page re-render; handler() rebuilds the report.
     if (enableLogging) log.debug "Button pressed: ${btn}"
 }
 
@@ -570,7 +581,7 @@ private void loadHub1AllDevices() {
         state["hub1AllDevicesStatus"] = "Error: Hub #1 Maker API app ID and/or token not configured"
         return
     }
-    def hub1LocalIp = location.hubs?.getAt(0)?.localIP
+    def hub1LocalIp = location.hubs[0].localIP
     def uri         = "http://${hub1LocalIp}:8080/apps/api/${appId}/devices?access_token=${token}"
     def allList = []
     try {
@@ -597,8 +608,6 @@ private void loadHub1AllDevices() {
         state["hub1AllDevicesStatus"] = "Error: ${e.message}"
     }
 }
-
-
 
 String handler() {
     state.lastRun = new Date().format("yyyy-MM-dd hh:mm a", location.timeZone)
@@ -1174,15 +1183,14 @@ private String buildTable(List devices, String title, String tableId,
         html += "</tr></thead><tbody>"
         devices.each { it ->
             html += "<tr>"
-            def inBoth   = bothLinks?.contains(it.linkUrl)
-            def safeName = htmlEscape(it.displayName)
+            def inBoth = bothLinks?.contains(it.linkUrl)
             def nameInner = inBoth
-                ? ("<span style='color:#cc6600;' title='${bothTooltip}'>${safeName}</span>"
+                ? ("<span style='color:#cc6600;' title='${bothTooltip}'>${it.displayName}</span>"
                    + "&nbsp;<small style='color:#cc6600;font-size:0.8em;'>&#x2605;</small>")
-                : safeName
+                : it.displayName
             html += "<td><a href='${it.linkUrl}' target='_blank'>${nameInner}</a></td>"
-            html += "<td>${htmlEscape(it.room)}</td>"
-            html += "<td class='hub-col'>${htmlEscape(it.hub)}</td>"
+            html += "<td>${it.room}</td>"
+            html += "<td class='hub-col'>${it.hub}</td>"
             html += buildStateCell(it, toggleCmd, stateLabel, stateStyle)
             html += "</tr>"
         }
@@ -1245,10 +1253,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
                 ? "color:red;font-weight:bold;text-align:center;white-space:nowrap;"
                 : "text-align:center;white-space:nowrap;"
             html += "<tr>"
-            html += "<td><a href='${it.linkUrl}' target='_blank'>${htmlEscape(it.displayName)}</a></td>"
-            html += "<td>${htmlEscape(it.room)}</td>"
-            html += "<td class='hub-col'>${htmlEscape(it.hub)}</td>"
-            html += "<td style='${statusStyle}'>${htmlEscape(it.status)}</td>"
+            html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
+            html += "<td>${it.room}</td>"
+            html += "<td class='hub-col'>${it.hub}</td>"
+            html += "<td style='${statusStyle}'>${it.status}</td>"
             html += "<td style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
             html += "<td style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
             html += "</tr>"
@@ -1429,7 +1437,6 @@ async function toggleStateCell(cell) {
 private boolean hasSwitchCapability(def caps) {
     if (!caps) return true
     def capsList   = (caps instanceof List ? caps : [caps])
-    if (!capsList)  return true
     def switchCaps = ["switch", "light", "outlet"] as Set
     return capsList.any { c ->
         def name = (c instanceof Map) ? (c.title ?: c.name ?: "").toString().toLowerCase()
@@ -1448,16 +1455,4 @@ private String resolveLocalRoom(def dev, Map roomMap) {
         } catch (ignore) {}
     }
     return roomName ?: "—"
-}
-
-// Escape user-supplied strings before inserting into generated HTML.
-// Prevents display glitches or broken markup if a device name, room name,
-// or hub label contains &, <, >, ", or '.
-private String htmlEscape(def v) {
-    return (v == null ? "" : v.toString())
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"',  "&quot;")
-        .replace("'",  "&#39;")
 }
