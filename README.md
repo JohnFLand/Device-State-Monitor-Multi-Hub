@@ -1,6 +1,6 @@
 # Device State Monitor Multi-Hub — User Guide
 
-**App version:** 1.40  
+**App version:** 1.42  
 **Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
 
 ---
