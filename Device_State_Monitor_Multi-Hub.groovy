@@ -37,7 +37,7 @@ FEATURES:
 */
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.42",
+    name:         "Device State Monitor Multi-Hub 1.43",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -348,7 +348,10 @@ def mainPage() {
 
         // ── Sort & Display Options ─────────────────────────────────────────────
         section(hideable: true, hidden: true, title: "Sort & Display Options") {
-            paragraph("<i><b>Note:</b> These are the default sort orders. Click any column header to re-sort temporarily.</i>")
+            paragraph("<hr><b>App Name</b>")
+            label title: "Rename this app", required: false
+
+            paragraph("<hr><i><b>Note:</b> These are the default sort orders. Click any column header to re-sort temporarily.</i>")
 
             paragraph("<hr><b>ON Devices Table</b>")
             input "sortByOn",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub"], defaultValue: "displayName", submitOnChange: true
@@ -389,7 +392,80 @@ def mainPage() {
             input "excludeSystemRoom", "bool", title: "Exclude devices in the \"System\" room from all reports?", defaultValue: false
             paragraph("<hr>")
             input "showSectionDetails","bool", title: "Show extra details in section headers?",    defaultValue: true
-            input "enableLogging",     "bool", title: "Enable debug logging?",                     defaultValue: false
+
+            def showHealthForCols = settings["showHealthTable"] != false
+            def lastActBtn = showHealthForCols
+                ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-lastact' onclick=\"toggleDsmCol('dsm-col-lastact',this)\">Last Activity</span>"
+                : ""
+            paragraph("<hr><b>Hide Columns</b><br>" +
+                "<div class='dsm-col-toggle-bar'>" +
+                "<span class='dsm-col-btn' data-dsm-col='dsm-col-room' onclick=\"toggleDsmCol('dsm-col-room',this)\">Room</span>" +
+                "<span class='dsm-col-btn' data-dsm-col='dsm-col-hub'  onclick=\"toggleDsmCol('dsm-col-hub',this)\">Hub</span>" +
+                lastActBtn +
+                "</div>")
+
+            paragraph("<hr>")
+            input "enableLogging", "bool", title: "Enable debug logging?", defaultValue: false
+        }
+
+        // ── Notes / User Guide ────────────────────────────────────────────────
+        section(hideable: true, hidden: true, title: "Notes / User Guide") {
+            paragraph(
+                "<b>Device State Monitor Multi-Hub</b> reports switch states and device health " +
+                "across up to three Hubitat hubs from a single app page." +
+
+                "<hr><b>Page Layout</b><br>" +
+                "The <b>Refresh Table</b> button and all four report tables appear at the top of the page. " +
+                "Configuration sections (Hub #1, Hub #2, Hub #3, Sort &amp; Display Options, and these Notes) " +
+                "are collapsed below and stay out of the way after initial setup." +
+
+                "<hr><b>The Four Tables</b>" +
+                "<ul>" +
+                "<li><b>ON Devices</b> — monitored devices currently reporting switch state <b>on</b>.</li>" +
+                "<li><b>OFF Devices</b> — monitored devices currently reporting switch state <b>off</b>.</li>" +
+                "<li><b>Unknown State</b> — monitored devices reporting neither on nor off (can be hidden in Sort &amp; Display Options).</li>" +
+                "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
+                "or whose last activity exceeds the configured threshold.</li>" +
+                "</ul>" +
+                "Device names are clickable links to the device edit page. " +
+                "Devices monitored in both the ON and OFF lists are flagged with a gold star (★) and shown in orange." +
+
+                "<hr><b>Clickable State Cells</b><br>" +
+                "When Maker API credentials are configured for a hub, the State cell in the ON and OFF tables is clickable — " +
+                "tap it to send the opposite command without leaving the page. " +
+                "The cell shows <b>…</b> while the command is in flight, then updates in-place on success. " +
+                "The Unknown State table shows <b>→ ON</b> and <b>→ OFF</b> mini-buttons instead, since neither direction can be inferred." +
+
+                "<hr><b>Hub #1 (Local)</b><br>" +
+                "Hub #1 is the hub running this app. Devices are read directly — no network call needed. " +
+                "Optionally configure Maker API credentials for Hub #1 under <i>Toggle Command &amp; Health Monitor Settings</i> " +
+                "to enable clickable State cells and the Load / Select All / Clear All actions in the health device picker." +
+
+                "<hr><b>Hubs #2 and #3 (Remote)</b><br>" +
+                "Remote hubs are queried via their Maker API on every Refresh. To set one up:<br>" +
+                "1. On the remote hub, install <b>Maker API</b> (Apps → Add Built-In App) and expose all devices you want to monitor.<br>" +
+                "2. Note the <b>App ID</b> (shown in the Maker API heading), <b>Access Token</b>, and the hub's <b>local IP address</b>.<br>" +
+                "3. In Device State Monitor, enable the hub, open <i>Show / Edit Connection Settings</i>, enter the IP / App ID / Token, " +
+                "then choose <b>⟳ Load / Reload Device List</b> from the Actions dropdown.<br>" +
+                "4. After loading, use Select All / Clear actions to manage device selections." +
+
+                "<hr><b>Sort &amp; Display Options</b><br>" +
+                "<b>App Name</b> — rename this app instance.<br>" +
+                "<b>Per-table sort</b> — set the default sort column and direction for each table. " +
+                "Click any column header in the live table to re-sort interactively without changing the saved default.<br>" +
+                "<b>Activity threshold</b> — devices with no recorded activity older than this many hours are flagged as Late Activity in the Health table. Default: 24h.<br>" +
+                "<b>Exclude virtual devices</b> — omits devices whose driver name contains \"virtual\" or whose name starts with \"VD \" from all tables.<br>" +
+                "<b>Exclude System room</b> — omits devices in the Hubitat room named \"System\" from all tables.<br>" +
+                "<b>Hide Columns</b> — toggle the Room, Hub, and (for the Health table) Last Activity columns on and off. " +
+                "Useful on narrow screens such as a phone in portrait orientation. Column visibility is saved in the browser's local storage and " +
+                "restored automatically on the next page load." +
+
+                "<hr><b>First-Time Setup</b><br>" +
+                "1. Expand <b>Hub #1</b>, set a label, and select devices for ON, OFF, and health monitoring.<br>" +
+                "2. For remote hubs: expand their section, enable, enter connection settings, and run Load / Reload.<br>" +
+                "3. Expand <b>Sort &amp; Display Options</b> and set your preferences.<br>" +
+                "4. Click <b>Refresh Table</b> to run the first report, then <b>Done</b> to save."
+            )
         }
     }
 }
@@ -1177,8 +1253,8 @@ private String buildTable(List devices, String title, String tableId,
         html += "<colgroup><col style='width:${nameColWidth}'><col style='width:20%'><col style='width:18%'><col style='width:${stateColWidth}'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
         html += "<th style='cursor:default;'>State</th>"
         html += "</tr></thead><tbody>"
         devices.each { it ->
@@ -1189,8 +1265,8 @@ private String buildTable(List devices, String title, String tableId,
                    + "&nbsp;<small style='color:#cc6600;font-size:0.8em;'>&#x2605;</small>")
                 : it.displayName
             html += "<td><a href='${it.linkUrl}' target='_blank'>${nameInner}</a></td>"
-            html += "<td>${it.room}</td>"
-            html += "<td class='hub-col'>${it.hub}</td>"
+            html += "<td class='dsm-col-room'>${it.room}</td>"
+            html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
             html += buildStateCell(it, toggleCmd, stateLabel, stateStyle)
             html += "</tr>"
         }
@@ -1236,15 +1312,15 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
         html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' " +
                 "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
         html += "<colgroup>" +
-                "<col style='width:28%'><col style='width:13%'><col style='width:11%'>" +
-                "<col style='width:11%'><col style='width:19%'><col style='width:18%'>" +
+                "<col style='width:28%'><col class='dsm-col-room' style='width:13%'><col class='dsm-col-hub' style='width:11%'>" +
+                "<col style='width:11%'><col class='dsm-col-lastact' style='width:19%'><col style='width:18%'>" +
                 "</colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='${sortColIdx == 3 ? sortClass : ""}'>HE Status</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='${sortColIdx == 4 ? sortClass : ""}'>Last Activity</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='dsm-col-lastact ${sortColIdx == 4 ? sortClass : ""}'>Last Activity</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",5)'>Issue</th>"
         html += "</tr></thead><tbody>"
 
@@ -1254,10 +1330,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
                 : "text-align:center;white-space:nowrap;"
             html += "<tr>"
             html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
-            html += "<td>${it.room}</td>"
-            html += "<td class='hub-col'>${it.hub}</td>"
+            html += "<td class='dsm-col-room'>${it.room}</td>"
+            html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
             html += "<td style='${statusStyle}'>${it.status}</td>"
-            html += "<td style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
+            html += "<td class='dsm-col-lastact' style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
             html += "<td style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
             html += "</tr>"
         }
@@ -1347,9 +1423,14 @@ async function toggleDevice(btn, forceCmd) {
     btn.disabled = true;
     btn.textContent = '…';
 
+    // Hub #2 / #3 URLs are absolute http:// — different origin from hub #1 page.
+    // Use no-cors so the command goes through; treat the opaque response as success.
+    const isCrossOrigin = url.startsWith('http://') || url.startsWith('https://');
+    const fetchOpts = isCrossOrigin ? { mode: 'no-cors' } : {};
+
     try {
-        const resp = await fetch(url);
-        if (resp.ok) {
+        const resp = await fetch(url, fetchOpts);
+        if (resp.ok || resp.type === 'opaque') {
             btn.textContent = '✓ Sent';
             setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2000);
         } else {
@@ -1377,9 +1458,14 @@ async function toggleStateCell(cell) {
     cell.style.opacity = '0.5';
     cell.style.cursor  = 'wait';
 
+    // Hub #2 / #3 URLs are absolute http:// — different origin from hub #1 page.
+    // Use no-cors so the command goes through; treat the opaque response as success.
+    const isCrossOrigin = url.startsWith('http://') || url.startsWith('https://');
+    const fetchOpts = isCrossOrigin ? { mode: 'no-cors' } : {};
+
     try {
-        const resp = await fetch(url);
-        if (resp.ok) {
+        const resp = await fetch(url, fetchOpts);
+        if (resp.ok || resp.type === 'opaque') {
             if (targetCmd === 'off') {
                 lbl.textContent = 'OFF';
                 cell.style.cssText = 'color:#444;font-weight:bold;text-align:center;white-space:nowrap;cursor:pointer;';
@@ -1403,6 +1489,28 @@ async function toggleStateCell(cell) {
         setTimeout(() => { lbl.textContent = savedTxt; cell.dataset.busy = 'false'; }, 3000);
     }
 }
+
+// ── Column hide toggles ────────────────────────────────────────────────────
+function toggleDsmCol(cls, btn) {
+    var hiding = btn.className.indexOf('dsm-col-hidden') === -1;
+    document.querySelectorAll('.' + cls).forEach(function(el) { el.style.display = hiding ? 'none' : ''; });
+    btn.className = hiding ? 'dsm-col-btn dsm-col-hidden' : 'dsm-col-btn';
+    try { localStorage.setItem('dsm_col_' + cls, hiding ? 'true' : 'false'); } catch(e) {}
+}
+
+// Apply saved column-hide state from localStorage on page load
+(function() {
+    var cols = ['dsm-col-room', 'dsm-col-hub', 'dsm-col-lastact'];
+    cols.forEach(function(cls) {
+        var hidden = false;
+        try { hidden = localStorage.getItem('dsm_col_' + cls) === 'true'; } catch(e) {}
+        if (hidden) {
+            document.querySelectorAll('.' + cls).forEach(function(el) { el.style.display = 'none'; });
+            var btn = document.querySelector('[data-dsm-col="' + cls + '"]');
+            if (btn) btn.className = 'dsm-col-btn dsm-col-hidden';
+        }
+    });
+})();
 </script>
 <style>
 .on-table { border-collapse:collapse; width:100%; table-layout:fixed; }
@@ -1427,6 +1535,13 @@ async function toggleStateCell(cell) {
 .toggle-btn:hover:not(:disabled) { background:#e0e0e0; }
 .toggle-btn:disabled { opacity:0.5; cursor:wait; }
 .toggle-btn-sm { padding:2px 5px; }
+.dsm-col-toggle-bar { margin-bottom:8px; font-size:0.9em; }
+.dsm-col-btn {
+    display:inline-block; cursor:pointer; padding:2px 8px; margin-right:6px;
+    border:1px solid #999; border-radius:3px; background:#e8e8e8; font-size:0.9em;
+}
+.dsm-col-btn:hover { background:#d4d4d4; }
+.dsm-col-btn.dsm-col-hidden { text-decoration:line-through; opacity:0.45; background:#ccc; }
 </style>"""
 }
 
