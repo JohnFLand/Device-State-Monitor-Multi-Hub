@@ -1,6 +1,6 @@
 # Device State Monitor Multi-Hub — User Guide
 
-**App version:** 1.42  
+**App version:** 1.43  
 **Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
 
 ---
@@ -58,7 +58,8 @@ The app page is divided into two zones:
 
 **Bottom — collapsed configuration sections**
 - Hub #1, Hub #2, Hub #3 settings (each collapsible)
-- Sort & Display Options
+- Sort & Display Options (sort defaults, Hide Columns, filtering, display preferences)
+- Notes / User Guide (condensed in-app reference)
 
 Configuration sections are hidden by default once set up, so the report tables are the first thing you see on every visit.
 
@@ -185,7 +186,11 @@ State cells are not interactive in the Health/Activity table — that table is f
 
 ## Sort & Display Options
 
-Expand the **Sort & Display Options** section at the bottom of the page to configure default sort behaviour and filtering.
+Expand the **Sort & Display Options** section at the bottom of the page to configure default sort behaviour, filtering, and display preferences.
+
+### App Name
+
+A **Rename this app** field appears at the top of the section. Enter a custom label to distinguish this instance from others (the label is shown in the Hubitat Apps list).
 
 ### Per-Table Sort Settings
 
@@ -220,6 +225,24 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 | **Show extra details in section headers?** | Appends monitored device counts to each hub section header (e.g. "Hub #3 – Office — 15 ON / 15 OFF / 47 Health monitored"). |
 | **Enable debug logging?** | Writes detailed log entries to the Hubitat log for each device checked during a refresh. Useful for diagnosing missing or incorrect data. Disable when not troubleshooting — it generates a large number of log entries for hubs with many selected devices. |
 
+### Hide Columns
+
+Three toggle buttons at the bottom of Sort & Display Options control column visibility across all tables:
+
+| Button | Columns hidden |
+|---|---|
+| **Room** | Room column in the ON, OFF, Unknown, and Health tables |
+| **Hub** | Hub column in the same four tables |
+| **Last Activity** | Last Activity column in the Health / Activity table only (button appears only when the Health table is enabled) |
+
+Click a button to hide the column; click again to show it. The button text is struck through while the column is hidden. Visibility choices are saved in the browser's local storage and restored automatically on every subsequent page load — no Refresh or Save required.
+
+Hiding the Room, Hub, and Last Activity columns is particularly useful on narrow screens (e.g. a phone in portrait orientation), where it frees significant horizontal space for the Device Name, HE Status, and Issue columns.
+
+### Notes / User Guide
+
+A collapsible **Notes / User Guide** section appears below Sort & Display Options and contains a condensed version of this guide for quick in-app reference.
+
 ---
 
 ## Typical First-Time Setup Sequence
@@ -229,7 +252,7 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 3. Expand **Hub #1**. Set a friendly label. Select devices for ON, OFF, and health monitoring.
 4. To enable clickable State cells and health Select All/Clear All on Hub #1: toggle **Show / Edit Toggle Command & Health Monitor Settings**, enter Maker API credentials for Hub #1, then use the **Hub #1 Health Device List Actions** dropdown to Load and Select All.
 5. For each remote hub: expand its section, toggle **Enable**, expand **Connection Settings**, enter IP/App ID/Token, collapse Connection Settings, then choose **⟳ Load / Reload Device List** from the Actions dropdown. After loading, use Select All actions and adjust individual selections as needed.
-6. Expand **Sort & Display Options**. Set activity threshold, sort preferences, and filtering options.
+6. Expand **Sort & Display Options**. Set activity threshold, sort preferences, and filtering options. Use **Hide Columns** to hide Room, Hub, and/or Last Activity columns if desired (handy on mobile).
 7. Click **Refresh Table** at the top of the page to run the first full report.
 8. Click **Done** to save.
 
