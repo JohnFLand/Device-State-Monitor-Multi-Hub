@@ -27,6 +27,8 @@ FEATURES:
     * Optional toggle to exclude virtual devices from all reports, including the
       Health/Activity table (uses same "virtual" definition as other tables).
     * All tables are independently sortable (click headers or Sort Options).
+    * Health / Activity Monitor table is horizontally scrollable on narrow screens
+      so iPhone portrait views do not squeeze columns until cells overlap.
     * Device names link to their hub's Devices page.
     * Report tables and Refresh button appear at the TOP of the page;
       all configuration sections are collapsed below.
@@ -37,7 +39,7 @@ FEATURES:
 */
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.43",
+    name:         "Device State Monitor Multi-Hub 1.49",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -57,7 +59,8 @@ preferences {
 // ─────────────────────────────────────────────────────────────────────────────
 
 def mainPage() {
-    dynamicPage(name: "mainPage", title: "<b>${app.name}</b>", uninstall: true, install: true) {
+    syncAppInstanceLabel()
+    dynamicPage(name: "mainPage", title: "<b>${htmlEscape(getAppDisplayName())}</b>", uninstall: true, install: true) {
 
         // ── Refresh + Report (TOP) ────────────────────────────────────────────
         section(title: "") {
@@ -72,10 +75,11 @@ def mainPage() {
 
         // ── Hub #1 – Local ────────────────────────────────────────────────────
         def hub1LabelVal       = settings["hub1Label"] ?: (location.name ?: "Hub 1")
-        def h1OnCount          = (devsOn  ?: []).findAll { !it.isDisabled() }.size()
-        def h1OffCount         = (devsOff ?: []).findAll { !it.isDisabled() }.size()
+        def h1OnCount          = (devsOn   ?: []).findAll { !it.isDisabled() }.size()
+        def h1OffCount         = (devsOff  ?: []).findAll { !it.isDisabled() }.size()
+        def h1LockCount        = (devsLock ?: []).findAll { !it.isDisabled() }.size()
         def hub1Title          = "Device Selection for Hub #1 – ${hub1LabelVal}"
-        if (showSectionDetails) hub1Title += buildSelSummary(h1OnCount, h1OffCount, (hub1HealthDevs ?: []).size())
+        if (showSectionDetails) hub1Title += buildSelSummary(h1OnCount, h1OffCount, (hub1HealthDevs ?: []).size(), h1LockCount)
 
         def hub1HealthActionVal  = settings["hub1HealthAction"]
         def hub1HealthActionOpen = (hub1HealthActionVal && hub1HealthActionVal != "none")
@@ -119,6 +123,12 @@ def mainPage() {
                 submitOnChange: true, multiple: true, required: false
             paragraph("<hr><b>Devices to monitor for OFF state</b> <small>(flagged when off)</small>")
             input "devsOff", "capability.switch", title: "Select OFF-monitored devices",
+                submitOnChange: true, multiple: true, required: false
+
+            paragraph("<hr><b>Devices to monitor for lock state</b> <small>(all lock states shown)</small>")
+            def h1LockSelCount = (devsLock ?: []).size()
+            input "devsLock", "capability.lock",
+                title: "Select lock-monitored devices (${h1LockSelCount} selected)",
                 submitOnChange: true, multiple: true, required: false
 
             // ── Hub #1 Health / Activity selector ────────────────────────────
@@ -179,9 +189,11 @@ def mainPage() {
         def h2OnList     = normalizeSelectionList(settings["hub2SelectedOnDevices"])
         def h2OffList    = normalizeSelectionList(settings["hub2SelectedOffDevices"])
         def h2HealthList = normalizeSelectionList(settings["hub2SelectedHealthDevices"])
+        def h2LockList   = normalizeSelectionList(settings["hub2SelectedLockDevices"])
         if (hub2ActionOpen) {
             def stored    = state["hub2Devices"]    ?: []
             def storedAll = state["hub2AllDevices"] ?: []
+            def storedLck = state["hub2LockDevices"] ?: []
             switch (hub2ActionVal) {
                 case "selAllOn":      h2OnList     = stored.collect    { it.id.toString() }; break
                 case "unselAllOn":    h2OnList     = []; break
@@ -189,15 +201,18 @@ def mainPage() {
                 case "unselAllOff":   h2OffList    = []; break
                 case "selAllHealth":  h2HealthList = storedAll.collect { it.id.toString() }; break
                 case "unselAllHealth":h2HealthList = []; break
+                case "selAllLock":    h2LockList   = storedLck.collect { it.id.toString() }; break
+                case "unselAllLock":  h2LockList   = []; break
             }
         }
         def hub2Title = "Device Selection for Hub #2 – ${hub2LabelVal}"
-        if (showSectionDetails && hub2Enabled) hub2Title += buildSelSummary(h2OnList.size(), h2OffList.size(), h2HealthList.size())
+        if (showSectionDetails && hub2Enabled) hub2Title += buildSelSummary(h2OnList.size(), h2OffList.size(), h2HealthList.size(), h2LockList.size())
 
         section(hideable: true, hidden: !hub2ActionOpen, title: hub2Title) {
             if (hub2ActionOpen) {
                 def hub2Stored    = state["hub2Devices"]    ?: []
                 def hub2StoredAll = state["hub2AllDevices"] ?: []
+                def hub2StoredLck = state["hub2LockDevices"] ?: []
                 switch (hub2ActionVal) {
                     case "load":
                         loadRemoteDeviceList(2, settings["hub2Ip"], settings["hub2AppId"], settings["hub2Token"]); break
@@ -213,6 +228,10 @@ def mainPage() {
                         app.updateSetting("hub2SelectedHealthDevices", [value: hub2StoredAll.collect { it.id.toString() }, type: "enum"]); break
                     case "unselAllHealth":
                         app.updateSetting("hub2SelectedHealthDevices", [value: [], type: "enum"]); break
+                    case "selAllLock":
+                        app.updateSetting("hub2SelectedLockDevices",   [value: hub2StoredLck.collect { it.id.toString() }, type: "enum"]); break
+                    case "unselAllLock":
+                        app.updateSetting("hub2SelectedLockDevices",   [value: [], type: "enum"]); break
                 }
                 app.updateSetting("hub2Action", [value: "none", type: "enum"])
             }
@@ -243,9 +262,11 @@ def mainPage() {
                     options: ["none": "Choose action…", "load": "⟳ Load / Reload Device List from Hub #2",
                               "selAllOn": "✓ Select All ON-monitored devices",     "unselAllOn":    "✗ Clear ON-monitored devices",
                               "selAllOff": "✓ Select All OFF-monitored devices",   "unselAllOff":   "✗ Clear OFF-monitored devices",
+                              "selAllLock": "✓ Select All lock-monitored devices", "unselAllLock":  "✗ Clear lock-monitored devices",
                               "selAllHealth": "✓ Select All health-monitored devices", "unselAllHealth": "✗ Clear health-monitored devices"],
                     required: false, submitOnChange: true
                 renderRemoteDeviceSelectors(2, state["hub2Devices"], h2OnList, h2OffList)
+                renderRemoteLockDeviceSelector(2, state["hub2LockDevices"], h2LockList)
                 renderRemoteHealthDeviceSelector(2, state["hub2AllDevices"], h2HealthList)
                 paragraph("<small><i><b>Disabled devices:</b> Hubitat's Maker API does not expose disabled state " +
                           "reliably, so disabled devices on remote hubs cannot be filtered automatically. " +
@@ -267,9 +288,11 @@ def mainPage() {
         def h3OnList     = normalizeSelectionList(settings["hub3SelectedOnDevices"])
         def h3OffList    = normalizeSelectionList(settings["hub3SelectedOffDevices"])
         def h3HealthList = normalizeSelectionList(settings["hub3SelectedHealthDevices"])
+        def h3LockList   = normalizeSelectionList(settings["hub3SelectedLockDevices"])
         if (hub3ActionOpen) {
             def stored    = state["hub3Devices"]    ?: []
             def storedAll = state["hub3AllDevices"] ?: []
+            def storedLck = state["hub3LockDevices"] ?: []
             switch (hub3ActionVal) {
                 case "selAllOn":      h3OnList     = stored.collect    { it.id.toString() }; break
                 case "unselAllOn":    h3OnList     = []; break
@@ -277,15 +300,18 @@ def mainPage() {
                 case "unselAllOff":   h3OffList    = []; break
                 case "selAllHealth":  h3HealthList = storedAll.collect { it.id.toString() }; break
                 case "unselAllHealth":h3HealthList = []; break
+                case "selAllLock":    h3LockList   = storedLck.collect { it.id.toString() }; break
+                case "unselAllLock":  h3LockList   = []; break
             }
         }
         def hub3Title = "Device Selection for Hub #3 – ${hub3LabelVal}"
-        if (showSectionDetails && hub3Enabled) hub3Title += buildSelSummary(h3OnList.size(), h3OffList.size(), h3HealthList.size())
+        if (showSectionDetails && hub3Enabled) hub3Title += buildSelSummary(h3OnList.size(), h3OffList.size(), h3HealthList.size(), h3LockList.size())
 
         section(hideable: true, hidden: !hub3ActionOpen, title: hub3Title) {
             if (hub3ActionOpen) {
                 def hub3Stored    = state["hub3Devices"]    ?: []
                 def hub3StoredAll = state["hub3AllDevices"] ?: []
+                def hub3StoredLck = state["hub3LockDevices"] ?: []
                 switch (hub3ActionVal) {
                     case "load":
                         loadRemoteDeviceList(3, settings["hub3Ip"], settings["hub3AppId"], settings["hub3Token"]); break
@@ -301,6 +327,10 @@ def mainPage() {
                         app.updateSetting("hub3SelectedHealthDevices", [value: hub3StoredAll.collect { it.id.toString() }, type: "enum"]); break
                     case "unselAllHealth":
                         app.updateSetting("hub3SelectedHealthDevices", [value: [], type: "enum"]); break
+                    case "selAllLock":
+                        app.updateSetting("hub3SelectedLockDevices",   [value: hub3StoredLck.collect { it.id.toString() }, type: "enum"]); break
+                    case "unselAllLock":
+                        app.updateSetting("hub3SelectedLockDevices",   [value: [], type: "enum"]); break
                 }
                 app.updateSetting("hub3Action", [value: "none", type: "enum"])
             }
@@ -331,9 +361,11 @@ def mainPage() {
                     options: ["none": "Choose action…", "load": "⟳ Load / Reload Device List from Hub #3",
                               "selAllOn": "✓ Select All ON-monitored devices",     "unselAllOn":    "✗ Clear ON-monitored devices",
                               "selAllOff": "✓ Select All OFF-monitored devices",   "unselAllOff":   "✗ Clear OFF-monitored devices",
+                              "selAllLock": "✓ Select All lock-monitored devices", "unselAllLock":  "✗ Clear lock-monitored devices",
                               "selAllHealth": "✓ Select All health-monitored devices", "unselAllHealth": "✗ Clear health-monitored devices"],
                     required: false, submitOnChange: true
                 renderRemoteDeviceSelectors(3, state["hub3Devices"], h3OnList, h3OffList)
+                renderRemoteLockDeviceSelector(3, state["hub3LockDevices"], h3LockList)
                 renderRemoteHealthDeviceSelector(3, state["hub3AllDevices"], h3HealthList)
                 paragraph("<small><i><b>Disabled devices:</b> Hubitat's Maker API does not expose disabled state " +
                           "reliably, so disabled devices on remote hubs cannot be filtered automatically. " +
@@ -348,8 +380,16 @@ def mainPage() {
 
         // ── Sort & Display Options ─────────────────────────────────────────────
         section(hideable: true, hidden: true, title: "Sort & Display Options") {
-            paragraph("<hr><b>App Name</b>")
-            label title: "Rename this app", required: false
+            paragraph("<hr>")
+            input "label", "text",
+                title: "<b>App instance name</b>",
+                defaultValue: getAppDisplayName(),
+                required: false,
+                submitOnChange: true,
+                width: 9
+            input "btnResetAppLabel", "button",
+                title: "Reset to App Name",
+                width: 3
 
             paragraph("<hr><i><b>Note:</b> These are the default sort orders. Click any column header to re-sort temporarily.</i>")
 
@@ -368,6 +408,15 @@ def mainPage() {
             if (settings["showUnknownTable"] != false) {
                 input "sortByUnk",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub"], defaultValue: "displayName", submitOnChange: true
                 input "sortOrderUnk", "enum", title: "Order",   options: ["asc": "Ascending", "desc": "Descending"],                   defaultValue: "asc",          submitOnChange: true
+            }
+
+            paragraph("<hr><b>Lock State Table</b>")
+            input "showLockTable", "bool",
+                title: "Show Lock State table?",
+                defaultValue: true, submitOnChange: true
+            if (settings["showLockTable"] != false) {
+                input "sortByLock",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub", "lockVal": "Lock State"], defaultValue: "displayName", submitOnChange: true
+                input "sortOrderLock", "enum", title: "Order",   options: ["asc": "Ascending", "desc": "Descending"],                                             defaultValue: "asc",          submitOnChange: true
             }
 
             paragraph("<hr><b>Health / Activity Monitor Table</b>")
@@ -392,16 +441,20 @@ def mainPage() {
             input "excludeSystemRoom", "bool", title: "Exclude devices in the \"System\" room from all reports?", defaultValue: false
             paragraph("<hr>")
             input "showSectionDetails","bool", title: "Show extra details in section headers?",    defaultValue: true
+            input "largeScreenLayout", "bool", title: "Use large-screen column widths? (wider Hub and Room columns — use when hub names are long)", defaultValue: false, submitOnChange: true
 
             def showHealthForCols = settings["showHealthTable"] != false
-            def lastActBtn = showHealthForCols
-                ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-lastact' onclick=\"toggleDsmCol('dsm-col-lastact',this)\">Last Activity</span>"
-                : ""
+            def heStatusBtn  = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-hestatus' onclick=\"toggleDsmCol('dsm-col-hestatus',this)\">HE Status</span>"      : ""
+            def healthStBtn  = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-healthst' onclick=\"toggleDsmCol('dsm-col-healthst',this)\">Health Status</span>"  : ""
+            def lastActBtn   = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-lastact'  onclick=\"toggleDsmCol('dsm-col-lastact',this)\">Last Activity</span>"   : ""
+            def issueBtn     = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-issue'    onclick=\"toggleDsmCol('dsm-col-issue',this)\">Issue</span>"             : ""
+            def batteryBtn   = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-battery'  onclick=\"toggleDsmCol('dsm-col-battery',this)\">Battery %</span>"      : ""
+            def lastBattBtn  = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-lastbatt' onclick=\"toggleDsmCol('dsm-col-lastbatt',this)\">Last Battery</span>"  : ""
             paragraph("<hr><b>Hide Columns</b><br>" +
                 "<div class='dsm-col-toggle-bar'>" +
                 "<span class='dsm-col-btn' data-dsm-col='dsm-col-room' onclick=\"toggleDsmCol('dsm-col-room',this)\">Room</span>" +
                 "<span class='dsm-col-btn' data-dsm-col='dsm-col-hub'  onclick=\"toggleDsmCol('dsm-col-hub',this)\">Hub</span>" +
-                lastActBtn +
+                heStatusBtn + healthStBtn + lastActBtn + issueBtn + batteryBtn + lastBattBtn +
                 "</div>")
 
             paragraph("<hr>")
@@ -424,8 +477,12 @@ def mainPage() {
                 "<li><b>ON Devices</b> — monitored devices currently reporting switch state <b>on</b>.</li>" +
                 "<li><b>OFF Devices</b> — monitored devices currently reporting switch state <b>off</b>.</li>" +
                 "<li><b>Unknown State</b> — monitored devices reporting neither on nor off (can be hidden in Sort &amp; Display Options).</li>" +
+                "<li><b>Lock State</b> — selected lock devices showing their current lock state. " +
+                "Hub #1 uses a capability picker; Hubs #2 and #3 use the lock device selector populated by Load / Reload. " +
+                "Locked is shown in green, unlocked in red.</li>" +
                 "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
-                "or whose last activity exceeds the configured threshold.</li>" +
+                "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, HE Status, " +
+                "Health Status, Last Activity, Issue, Battery %, Last Battery.</li>" +
                 "</ul>" +
                 "Device names are clickable links to the device edit page. " +
                 "Devices monitored in both the ON and OFF lists are flagged with a gold star (★) and shown in orange." +
@@ -450,14 +507,19 @@ def mainPage() {
                 "4. After loading, use Select All / Clear actions to manage device selections." +
 
                 "<hr><b>Sort &amp; Display Options</b><br>" +
-                "<b>App Name</b> — rename this app instance.<br>" +
+                "<b>App Name</b> — rename this app instance; use <b>Reset to App Name</b> to restore the current app code name/version.<br>" +
                 "<b>Per-table sort</b> — set the default sort column and direction for each table. " +
                 "Click any column header in the live table to re-sort interactively without changing the saved default.<br>" +
                 "<b>Activity threshold</b> — devices with no recorded activity older than this many hours are flagged as Late Activity in the Health table. Default: 24h.<br>" +
                 "<b>Exclude virtual devices</b> — omits devices whose driver name contains \"virtual\" or whose name starts with \"VD \" from all tables.<br>" +
                 "<b>Exclude System room</b> — omits devices in the Hubitat room named \"System\" from all tables.<br>" +
-                "<b>Hide Columns</b> — toggle the Room, Hub, and (for the Health table) Last Activity columns on and off. " +
-                "Useful on narrow screens such as a phone in portrait orientation. Column visibility is saved in the browser's local storage and " +
+                "<b>Hide Columns</b> — eight toggle buttons control column visibility. " +
+                "<b>Room</b> and <b>Hub</b> apply to all four tables. " +
+                "The remaining six apply to the Health / Activity table only: " +
+                "<b>HE Status</b>, <b>Health Status</b>, <b>Last Activity</b>, <b>Issue</b>, <b>Battery %</b>, <b>Last Battery</b>. " +
+                "Buttons appear in the same left-to-right order as the columns they control. " +
+                "The Health / Activity table also has a horizontal scroll wrapper " +
+                "so columns keep usable minimum widths instead of overlapping. Column visibility is saved in the browser's local storage and " +
                 "restored automatically on the next page load." +
 
                 "<hr><b>First-Time Setup</b><br>" +
@@ -468,6 +530,41 @@ def mainPage() {
             )
         }
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// APP INSTANCE LABEL HELPERS
+// ─────────────────────────────────────────────────────────────────────────────
+
+private void syncAppInstanceLabel() {
+    String desired = safeString(settings?.label).trim()
+    if (!desired) return
+
+    String current = safeString(app.label ?: app.name).trim()
+    if (desired == current) return
+
+    try {
+        app.updateLabel(desired)
+        if (enableLogging) log.debug "App instance label updated to: ${desired}"
+    } catch (Throwable t) {
+        log.warn "Could not update app instance label to '${desired}': ${t.message}"
+    }
+}
+
+private void resetAppInstanceLabel() {
+    String defaultName = app?.name?.toString() ?: "Device State Monitor Multi-Hub"
+    try {
+        app.updateLabel(defaultName)
+        app.updateSetting("label", [value: defaultName, type: "text"])
+        if (enableLogging) log.debug "Device State Monitor Multi-Hub: app label reset to app name '${defaultName}'"
+    } catch (Throwable t) {
+        log.warn "Device State Monitor Multi-Hub: app label reset failed — ${t.message}"
+    }
+}
+
+
+private String getAppDisplayName() {
+    return safeString(app.label ?: app.name ?: "Device State Monitor Multi-Hub")
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -532,11 +629,12 @@ private List normalizeSelectionList(def raw) {
     return raw ? [raw.toString()] : []
 }
 
-private String buildSelSummary(int onCount, int offCount, int healthCount = 0) {
-    if (onCount == 0 && offCount == 0 && healthCount == 0) return " — No devices selected"
+private String buildSelSummary(int onCount, int offCount, int healthCount = 0, int lockCount = 0) {
+    if (onCount == 0 && offCount == 0 && healthCount == 0 && lockCount == 0) return " — No devices selected"
     def parts = []
-    if (onCount    > 0) parts << "${onCount} ON"
-    if (offCount   > 0) parts << "${offCount} OFF"
+    if (onCount     > 0) parts << "${onCount} ON"
+    if (offCount    > 0) parts << "${offCount} OFF"
+    if (lockCount   > 0) parts << "${lockCount} Lock"
     if (healthCount > 0) parts << "${healthCount} Health"
     return " — " + parts.join(" / ") + " monitored"
 }
@@ -569,12 +667,56 @@ private Map buildRemoteHealthDeviceOptions(int hubNum) {
     }
 }
 
+private Map buildRemoteLockDeviceOptions(int hubNum) {
+    def stored     = state["hub${hubNum}LockDevices"]
+    if (stored == null) return null
+    def filterText = settings["hub${hubNum}Filter"]?.toLowerCase()?.trim()
+    def filtered   = filterText
+        ? stored.findAll { dev -> dev.name?.toLowerCase()?.contains(filterText) || dev.room?.toLowerCase()?.contains(filterText) }
+        : stored
+    if (!filtered) return [:]
+    return filtered.sort { it.name }.collectEntries { dev ->
+        def label = dev.name + (dev.room ? " (${dev.room})" : "")
+        ["${dev.id}": label]
+    }
+}
+
+private void renderRemoteLockDeviceSelector(int hubNum, def lockDevices, List lockSel) {
+    if (lockDevices == null) {
+        paragraph("<i><b>Lock monitoring:</b> Device list not yet loaded. " +
+                  "Choose <b>Load / Reload Device List</b> above to populate the lock device selector.</i>")
+        return
+    }
+    def total = lockDevices.size()
+    paragraph("<hr><b>Devices to monitor for lock state — Hub #${hubNum}</b> &nbsp;" +
+              "<small>(${lockSel.size()} selected of ${total} lock device${total == 1 ? '' : 's'} available)</small>")
+    def opts = buildRemoteLockDeviceOptions(hubNum)
+    def filterNote = settings["hub${hubNum}Filter"] ? " — filtered" : ""
+    if (opts != null && opts.size() > 0) {
+        input "hub${hubNum}SelectedLockDevices", "enum",
+            title: "Lock-monitored devices (${opts.size()} available${filterNote})",
+            options: opts, multiple: true, required: false, submitOnChange: true
+    } else if (opts != null) {
+        paragraph("<span style='color:red;'>No lock devices found on Hub #${hubNum}. " +
+                  "Ensure lock devices are exposed in the Maker API app.</span>")
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // LIFECYCLE
 // ─────────────────────────────────────────────────────────────────────────────
 
-def installed()  { initialize() }
-def updated()    { unschedule(); unsubscribe(); initialize() }
+def installed() {
+    syncAppInstanceLabel()
+    initialize()
+}
+
+def updated() {
+    unschedule()
+    unsubscribe()
+    syncAppInstanceLabel()
+    initialize()
+}
 
 void initialize() {
     unschedule()
@@ -582,6 +724,10 @@ void initialize() {
 }
 
 def appButtonHandler(btn) {
+    if (btn == "btnResetAppLabel") {
+        resetAppInstanceLabel()
+        return
+    }
     if (enableLogging) log.debug "Button pressed: ${btn}"
 }
 
@@ -599,12 +745,14 @@ private void loadRemoteDeviceList(int hubNum, String ip, String appId, String to
     }
     def uri        = "http://${ip}/apps/api/${appId}/devices?access_token=${token}"
     def switchList  = []
+    def lockList    = []
     def allList     = []
     def disabledIds = []
     try {
         httpGet([uri: uri, contentType: "application/json", timeout: 15]) { resp ->
             if (resp.status != 200) {
                 state["hub${hubNum}Devices"]     = []
+                state["hub${hubNum}LockDevices"] = []
                 state["hub${hubNum}AllDevices"]  = []
                 state["hub${hubNum}DisabledIds"] = []
                 state["hub${hubNum}LoadStatus"]  = "Error: HTTP ${resp.status}"
@@ -625,17 +773,20 @@ private void loadRemoteDeviceList(int hubNum, String ip, String appId, String to
                 } else {
                     allList << devEntry
                     if (hasSwitchCapability(dev.capabilities)) switchList << devEntry
+                    if (hasLockCapability(dev.capabilities))   lockList   << devEntry
                 }
             }
         }
         state["hub${hubNum}Devices"]     = switchList
+        state["hub${hubNum}LockDevices"] = lockList
         state["hub${hubNum}AllDevices"]  = allList
         state["hub${hubNum}DisabledIds"] = disabledIds
-        state["hub${hubNum}LoadStatus"]  = "OK: ${switchList.size()} switch device${switchList.size() == 1 ? '' : 's'} loaded (${allList.size()} enabled, ${disabledIds.size()} disabled)"
-        log.info "${hubLabel}: Loaded ${switchList.size()} switch device(s), ${allList.size()} enabled, ${disabledIds.size()} disabled."
+        state["hub${hubNum}LoadStatus"]  = "OK: ${switchList.size()} switch / ${lockList.size()} lock device${switchList.size() == 1 ? '' : 's'} loaded (${allList.size()} enabled, ${disabledIds.size()} disabled)"
+        log.info "${hubLabel}: Loaded ${switchList.size()} switch, ${lockList.size()} lock, ${allList.size()} enabled, ${disabledIds.size()} disabled."
     } catch (Exception e) {
         log.error "${hubLabel}: Error loading device list — ${e.message}"
         state["hub${hubNum}Devices"]     = []
+        state["hub${hubNum}LockDevices"] = []
         state["hub${hubNum}AllDevices"]  = []
         state["hub${hubNum}DisabledIds"] = []
         state["hub${hubNum}LoadStatus"]  = "Error: ${e.message}"
@@ -716,6 +867,7 @@ private Map collectAllDeviceStates() {
     def excludeSysRoom       = settings["excludeSystemRoom"] ?: false
     def onPool               = []
     def offPool              = []
+    def lockPool             = []
     def healthPool           = []
     def warnings             = []
     def activityThreshHours  = (settings["activityThresholdHours"] ?: 24) as long
@@ -739,6 +891,16 @@ private Map collectAllDeviceStates() {
             dev.typeName?.toLowerCase()?.contains("virtual") ||
             dev.displayName?.startsWith("VD ")
         )) return false
+        return true
+    }
+
+    // Lock devices are explicitly hand-picked by the user, so the virtual-device
+    // exclusion filter is intentionally not applied — only disabled and System-room
+    // devices are skipped.
+    def filterLock = { dev ->
+        if (dev.isDisabled()) return false
+        def roomName = resolveLocalRoom(dev, roomMap)
+        if (excludeSysRoom && roomName == "System") return false
         return true
     }
 
@@ -778,6 +940,12 @@ private Map collectAllDeviceStates() {
                     switchVal: dev.currentValue("switch")?.toString()?.toLowerCase(),
                     toggleOnUrl: onUrl, toggleOffUrl: offUrl]
     }
+    // Lock pool – Hub #1
+    (devsLock ?: []).findAll(filterLock).each { dev ->
+        lockPool << [displayName: dev.displayName, room: resolveLocalRoom(dev, roomMap),
+                     hub: hub1LabelVal, linkUrl: "/device/edit/${dev.id}",
+                     lockVal: dev.currentValue("lock")?.toString()?.toLowerCase() ?: "unknown"]
+    }
     // Health pool – Hub #1
     // Uses hub1HealthDevs (capability.* input) for direct device object access —
     // no HTTP call needed and gives accurate .getStatus() / .getLastActivity() data.
@@ -792,15 +960,27 @@ private Map collectAllDeviceStates() {
         if (!(statusBad || healthBad || lateActivity)) return
         def lastActStr  = lastAct ? lastAct.format("yyyy-MM-dd hh:mm a", location.timeZone)
                                   : "<span style='color:red;'>Never</span>"
+        def lastBattStr = "n/a"
+        try {
+            def lbRaw = dev.currentValue("lastBattery")
+            if (lbRaw) {
+                def lbDate = (lbRaw instanceof Date) ? lbRaw
+                           : new java.text.SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy").parse(lbRaw.toString())
+                lastBattStr = lbDate.format("yyyy-MM-dd hh:mm a", location.timeZone)
+            }
+        } catch (ignored) {}
         healthPool << [
-            displayName  : dev.displayName,
-            room         : resolveLocalRoom(dev, roomMap),
-            hub          : hub1LabelVal,
-            linkUrl      : "/device/edit/${dev.id}",
-            status       : rawStatus ?: (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—")),
-            lastActivity : lastAct,
+            displayName    : dev.displayName,
+            room           : resolveLocalRoom(dev, roomMap),
+            hub            : hub1LabelVal,
+            linkUrl        : "/device/edit/${dev.id}",
+            status         : rawStatus ?: (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—")),
+            lastActivity   : lastAct,
             lastActivityStr: lastActStr,
-            issue        : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours)
+            issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours),
+            healthStatus   : rawHealthSt ?: "n/a",
+            battery        : dev.currentValue("battery")?.toString() ?: "n/a",
+            lastBattery    : lastBattStr
         ]
     }
 
@@ -833,6 +1013,18 @@ private Map collectAllDeviceStates() {
             }
         }
 
+        // — Lock pool —
+        def lockRaw  = settings["hub${hubNum}SelectedLockDevices"]
+        def lockIds  = (lockRaw instanceof List ? lockRaw : (lockRaw ? [lockRaw] : []))*.toString() as Set
+        if (lockIds) {
+            def (lkEntries, lkWarn) = fetchRemoteLockStates(ip, appId, token, hubLabel, excludeVirt, excludeSysRoom, lockIds)
+            if (lkWarn && !warnings.contains(lkWarn)) warnings << lkWarn
+            lockPool.addAll(lkEntries.collect { e ->
+                [displayName: e.displayName, room: e.room, hub: hubLabel,
+                 linkUrl: e.linkUrl, lockVal: e.lockVal]
+            })
+        }
+
         // — Health pool —
         def healthRaw    = settings["hub${hubNum}SelectedHealthDevices"]
         def healthIds    = (healthRaw instanceof List ? healthRaw : (healthRaw ? [healthRaw] : []))*.toString() as Set
@@ -848,12 +1040,15 @@ private Map collectAllDeviceStates() {
                 [displayName: e.displayName, room: e.room, hub: hubLabel,
                  linkUrl: e.linkUrl, status: e.status,
                  lastActivity: e.lastActivity, lastActivityStr: e.lastActivityStr,
-                 issue: e.issue]
+                 issue: e.issue,
+                 healthStatus: e.healthStatus ?: "n/a",
+                 battery:     e.battery      ?: "n/a",
+                 lastBattery: e.lastBattery  ?: "n/a"]
             })
         }
     }
 
-    return [onPool: onPool, offPool: offPool, healthPool: healthPool, warnings: warnings]
+    return [onPool: onPool, offPool: offPool, lockPool: lockPool, healthPool: healthPool, warnings: warnings]
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -953,6 +1148,90 @@ private List fetchRemoteDeviceStates(String ip, String appId, String token,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// REMOTE LOCK STATE FETCHER
+// ─────────────────────────────────────────────────────────────────────────────
+
+private List fetchRemoteLockStates(String ip, String appId, String token,
+                                   String hubLabel, boolean excludeVirt,
+                                   boolean excludeSysRoom, Set selectedIds) {
+    def results = []
+    def warning = null
+
+    if (!ip || !appId || !token) {
+        warning = "${hubLabel}: Missing credentials for lock monitor — skipped."
+        return [results, warning]
+    }
+
+    def uri = "http://${ip}/apps/api/${appId}/devices?access_token=${token}"
+    try {
+        httpGet([uri: uri, contentType: "application/json", timeout: 10]) { resp ->
+            if (resp.status != 200) {
+                warning = "${hubLabel}: Unexpected HTTP status ${resp.status} (lock fetch)."
+                return
+            }
+            resp.data?.each { dev ->
+                def devId = dev.id?.toString()
+                if (!selectedIds.contains(devId)) return
+                if (dev.disabled == true || dev.disabled?.toString() == "true" ||
+                    (dev.status ?: "").toString().toUpperCase() == "DISABLED") return
+                if (excludeVirt && (
+                    (dev.type ?: "").toString().toLowerCase().contains("virtual") ||
+                    (dev.label ?: dev.name ?: "").toString().startsWith("VD ")
+                )) return
+                if (excludeSysRoom && (dev.room ?: "").toString() == "System") return
+
+                // Try to read lock attribute from bulk response
+                def lockVal = null
+                def attrsField = dev.attributes
+                if (attrsField instanceof List) {
+                    def lk = attrsField.find { a -> a?.name?.toString() == "lock" }
+                    lockVal = lk?.currentValue?.toString()?.toLowerCase()
+                } else if (attrsField instanceof Map) {
+                    lockVal = attrsField["lock"]?.toString()?.toLowerCase()
+                }
+
+                // Fall back to per-device fetch if not in bulk response
+                if (lockVal == null) {
+                    try {
+                        httpGet([uri: "http://${ip}/apps/api/${appId}/devices/${devId}?access_token=${token}",
+                                 contentType: "application/json", timeout: 5]) { devResp ->
+                            if (devResp.status == 200) {
+                                def da = devResp.data?.attributes
+                                if (da instanceof List) {
+                                    def lk2 = da.find { a -> a?.name?.toString() == "lock" }
+                                    lockVal = lk2?.currentValue?.toString()?.toLowerCase()
+                                } else if (da instanceof Map) {
+                                    lockVal = da["lock"]?.toString()?.toLowerCase()
+                                }
+                            }
+                        }
+                    } catch (Exception fe) {
+                        if (enableLogging) log.warn "${hubLabel} device ${devId}: lock fallback fetch failed — ${fe.message}"
+                    }
+                }
+
+                results << [devId      : devId,
+                            displayName: (dev.label ?: dev.name ?: "Unknown").toString(),
+                            room       : (dev.room ?: "—").toString(),
+                            linkUrl    : "http://${ip}/device/edit/${devId}",
+                            lockVal    : lockVal ?: "unknown"]
+            }
+        }
+    } catch (java.net.SocketTimeoutException e) {
+        warning = "${hubLabel} (${ip}): Connection timed out (lock fetch) — hub may be offline."
+        if (enableLogging) log.warn "Timeout querying ${hubLabel} locks: ${e}"
+    } catch (java.net.ConnectException e) {
+        warning = "${hubLabel} (${ip}): Could not connect (lock fetch) — check IP address."
+        if (enableLogging) log.warn "Connection refused for ${hubLabel} locks: ${e}"
+    } catch (Exception e) {
+        warning = "${hubLabel} (${ip}): Error (lock fetch) — ${e.message}"
+        if (enableLogging) log.error "Unexpected error querying ${hubLabel} locks: ${e}"
+    }
+
+    return [results, warning]
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // REMOTE HEALTH / ACTIVITY STATE FETCHER
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1031,6 +1310,35 @@ private List fetchRemoteHealthDeviceStates(String ip, String appId, String token
                     rawHealthSt = attrsField["healthStatus"]?.toString()?.toLowerCase() ?: ""
                 }
 
+                // battery, lastBattery attributes
+                def batteryVal   = "n/a"
+                def lastBattVal  = "n/a"
+                if (attrsField instanceof List) {
+                    def ba  = attrsField.find { a -> a?.name?.toString() == "battery" }
+                    batteryVal  = ba?.currentValue?.toString() ?: "n/a"
+                    def lb  = attrsField.find { a -> a?.name?.toString() == "lastBattery" }
+                    def lbRaw = lb?.currentValue?.toString()
+                    if (lbRaw) {
+                        try {
+                            def lbDate = (lbRaw.isLong())
+                                ? new Date(lbRaw.toLong())
+                                : Date.parse("EEE MMM dd HH:mm:ss zzz yyyy", lbRaw)
+                            lastBattVal = lbDate.format("yyyy-MM-dd hh:mm a", location.timeZone)
+                        } catch (ignored) { lastBattVal = lbRaw }
+                    }
+                } else if (attrsField instanceof Map) {
+                    batteryVal = attrsField["battery"]?.toString() ?: "n/a"
+                    def lbRaw  = attrsField["lastBattery"]?.toString()
+                    if (lbRaw) {
+                        try {
+                            def lbDate = (lbRaw.isLong())
+                                ? new Date(lbRaw.toLong())
+                                : Date.parse("EEE MMM dd HH:mm:ss zzz yyyy", lbRaw)
+                            lastBattVal = lbDate.format("yyyy-MM-dd hh:mm a", location.timeZone)
+                        } catch (ignored) { lastBattVal = lbRaw }
+                    }
+                }
+
                 // ── lastActivity resolution (3-step) ─────────────────────────
                 // Step 1: lastActivity field on the device endpoint (present in some HE versions)
                 Date lastActDate = parseRemoteLastActivity(dev.lastActivity, hubLabel, devId)
@@ -1082,7 +1390,10 @@ private List fetchRemoteHealthDeviceStates(String ip, String appId, String token
                     status         : rawStatus ?: (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—")),
                     lastActivity   : lastActDate,
                     lastActivityStr: lastActStr,
-                    issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours)
+                    issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours),
+                    healthStatus   : rawHealthSt ?: "n/a",
+                    battery        : batteryVal,
+                    lastBattery    : lastBattVal
                 ]
             }
         } catch (java.net.SocketTimeoutException e) {
@@ -1170,9 +1481,11 @@ private Map generateReportTables() {
     def collectMs   = new Date().time - t0
     def onPool      = data.onPool
     def offPool     = data.offPool
+    def lockPool    = data.lockPool
     def healthPool  = data.healthPool
     def warnings    = data.warnings
     def showUnknown = settings["showUnknownTable"] != false
+    def showLock    = settings["showLockTable"]    != false
     def showHealth  = settings["showHealthTable"]  != false
 
     def html = ""
@@ -1207,6 +1520,15 @@ private Map generateReportTables() {
         html += buildTable(unkAll,
             "<b>Devices with Unknown State</b>", "table_unk", "#888888", "Unknown", "color:#888;font-weight:bold;",
             settings["sortByUnk"] ?: "displayName", settings["sortOrderUnk"] ?: "asc", "both")
+    }
+
+    // Lock State table
+    if (showLock) {
+        html += "<br>"
+        html += buildLockTable(lockPool,
+            "<b>Lock State</b>", "table_lock", "#2e5fa3",
+            settings["sortByLock"]    ?: "displayName",
+            settings["sortOrderLock"] ?: "asc")
     }
 
     // Health / Activity Monitor table
@@ -1247,10 +1569,15 @@ private String buildTable(List devices, String title, String tableId,
     def html  = "<h4 style='margin-bottom:4px;'>${title}: ${countStr}.</h4><br>"
 
     if (count > 0) {
-        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
-        def stateColWidth = (toggleCmd == "both") ? "22%" : "7%"
-        def nameColWidth  = (toggleCmd == "both") ? "40%" : "55%"
-        html += "<colgroup><col style='width:${nameColWidth}'><col style='width:20%'><col style='width:18%'><col style='width:${stateColWidth}'></colgroup>"
+        def isUnknown  = (toggleCmd == "both")
+        def largeScrn  = settings["largeScreenLayout"] == true
+        def roomW      = largeScrn ? "180px" : "140px"
+        def hubW       = largeScrn ? "200px" : "70px"
+        def stateW     = isUnknown ? "125px" : "95px"
+        def minW       = "${(roomW.replace("px","") as int) + (hubW.replace("px","") as int) + 250}px"
+        html += "<div class='dsm-scroll-wrap'>"
+        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${minW};'>"
+        html += "<colgroup><col><col class='dsm-col-room' style='width:${roomW}'><col style='width:${hubW}'><col style='width:${stateW}'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
@@ -1270,7 +1597,70 @@ private String buildTable(List devices, String title, String tableId,
             html += buildStateCell(it, toggleCmd, stateLabel, stateStyle)
             html += "</tr>"
         }
-        html += "</tbody></table>"
+        html += "</tbody></table></div>"
+    }
+    return html
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOCK STATE TABLE BUILDER
+// ─────────────────────────────────────────────────────────────────────────────
+
+private String buildLockTable(List devices, String title, String tableId, String headerColor,
+                              String sortBy, String sortOrder) {
+    def count = devices.size()
+
+    def sortColIdx = 0
+    switch (sortBy) {
+        case "room":    sortColIdx = 1; break
+        case "hub":     sortColIdx = 2; break
+        case "lockVal": sortColIdx = 3; break
+        default:        sortColIdx = 0; break
+    }
+    def sortClass = (sortOrder == "desc") ? "sort-desc" : "sort-asc"
+
+    devices = devices.sort { it ->
+        switch (sortBy) {
+            case "room":    return it.room?.toLowerCase()        ?: ""
+            case "hub":     return it.hub?.toLowerCase()         ?: ""
+            case "lockVal": return it.lockVal?.toLowerCase()     ?: ""
+            default:        return it.displayName?.toLowerCase() ?: ""
+        }
+    }
+    if (sortOrder == "desc") devices = devices.reverse()
+
+    def countStr = (count > 0) ? "${count} device${count == 1 ? '' : 's'}" : "No devices"
+    def html = "<h4 style='margin-bottom:4px;'>${title}: ${countStr}.</h4><br>"
+
+    if (count > 0) {
+        def largeScrn = settings["largeScreenLayout"] == true
+        def roomW     = largeScrn ? "180px" : "140px"
+        def hubW      = largeScrn ? "200px" : "70px"
+        def lockMinW  = "${(roomW.replace("px","") as int) + (hubW.replace("px","") as int) + 250}px"
+        html += "<div class='dsm-scroll-wrap'>"
+        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' " +
+                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${lockMinW};'>"
+        html += "<colgroup><col><col class='dsm-col-room' style='width:${roomW}'><col style='width:${hubW}'><col style='width:110px'></colgroup>"
+        html += "<thead><tr>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Lock Name</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='${sortColIdx == 3 ? sortClass : ""}'>State</th>"
+        html += "</tr></thead><tbody>"
+
+        devices.each { it ->
+            def lv = it.lockVal?.toLowerCase() ?: "unknown"
+            def lockColor = (lv == "locked")   ? "color:green;font-weight:bold;" :
+                            (lv == "unlocked") ? "color:red;font-weight:bold;"   :
+                                                 "color:#888;"
+            html += "<tr>"
+            html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
+            html += "<td class='dsm-col-room'>${it.room}</td>"
+            html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
+            html += "<td class='state-col' style='${lockColor}'>${lv}</td>"
+            html += "</tr>"
+        }
+        html += "</tbody></table></div>"
     }
     return html
 }
@@ -1288,7 +1678,7 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
         case "room":         sortColIdx = 1; break
         case "hub":          sortColIdx = 2; break
         case "status":       sortColIdx = 3; break
-        case "lastActivity": sortColIdx = 4; break
+        case "lastActivity": sortColIdx = 5; break
         default:             sortColIdx = 0; break
     }
     def sortClass = (sortOrder == "desc") ? "sort-desc" : "sort-asc"
@@ -1309,35 +1699,66 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
                "<small><i>Flagged when OFFLINE, INACTIVE, NOT PRESENT, or last activity &gt; ${threshHours}h ago.</i></small><br>"
 
     if (count > 0) {
-        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' " +
-                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
+        // Columns 0-8 are always in the DOM so sort indices stay stable regardless of hide state:
+        // 0=Device Name, 1=Room, 2=Hub, 3=HE Status, 4=Health Status, 5=Last Activity,
+        // 6=Issue, 7=Battery %, 8=Last Battery
+        html += "<div class='dsm-scroll-wrap dsm-health-scroll'>"
+        def largeScrn   = settings["largeScreenLayout"] == true
+        def hRoomW      = largeScrn ? 150 : 105
+        def hHubW       = largeScrn ? 200 : 90
+        def hMinW       = 1200 + (hRoomW - 105) + (hHubW - 90)
+        html += "<table id='${tableId}' class='on-table dsm-health-table' cellpadding='0' cellspacing='0' " +
+                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${hMinW}px;'>"
         html += "<colgroup>" +
-                "<col style='width:28%'><col class='dsm-col-room' style='width:13%'><col class='dsm-col-hub' style='width:11%'>" +
-                "<col style='width:11%'><col class='dsm-col-lastact' style='width:19%'><col style='width:18%'>" +
+                "<col style='width:230px'>" +
+                "<col class='dsm-col-room'     style='width:${hRoomW}px'>" +
+                "<col class='dsm-col-hub'      style='width:${hHubW}px'>" +
+                "<col class='dsm-col-hestatus' style='width:110px'>" +
+                "<col class='dsm-col-healthst' style='width:105px'>" +
+                "<col class='dsm-col-lastact'  style='width:150px'>" +
+                "<col class='dsm-col-issue'    style='width:190px'>" +
+                "<col class='dsm-col-battery'  style='width:75px'>" +
+                "<col class='dsm-col-lastbatt' style='width:145px'>" +
                 "</colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='${sortColIdx == 3 ? sortClass : ""}'>HE Status</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='dsm-col-lastact ${sortColIdx == 4 ? sortClass : ""}'>Last Activity</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",5)'>Issue</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='dsm-col-hestatus ${sortColIdx == 3 ? sortClass : ""}'>HE Status</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='dsm-col-healthst'>Health Status</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",5)' class='dsm-col-lastact ${sortColIdx == 5 ? sortClass : ""}'>Last Activity</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",6)' class='dsm-col-issue'>Issue</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",7)' class='dsm-col-battery'>Battery %</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",8)' class='dsm-col-lastbatt'>Last Battery</th>"
         html += "</tr></thead><tbody>"
 
         devices.each { it ->
             def statusStyle = (it.status in ["OFFLINE", "INACTIVE", "NOT PRESENT"])
                 ? "color:red;font-weight:bold;text-align:center;white-space:nowrap;"
                 : "text-align:center;white-space:nowrap;"
+            def hsSt    = it.healthStatus?.toString()?.toLowerCase() ?: "n/a"
+            def hsColor = (hsSt == "online") ? "color:green;" : (hsSt == "offline") ? "color:red;" : ""
+            def battStr = it.battery?.toString() ?: "n/a"
+            def battColor = ""
+            if (battStr != "n/a") {
+                try {
+                    def battInt = battStr.toInteger()
+                    battColor = battInt < 20 ? "color:red;" : battInt < 40 ? "color:darkorange;" : "color:green;"
+                } catch (ignored) {}
+            }
             html += "<tr>"
             html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
             html += "<td class='dsm-col-room'>${it.room}</td>"
             html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
-            html += "<td style='${statusStyle}'>${it.status}</td>"
-            html += "<td class='dsm-col-lastact' style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
-            html += "<td style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
+            html += "<td class='dsm-col-hestatus' style='${statusStyle}'>${it.status}</td>"
+            html += "<td class='dsm-col-healthst' style='text-align:center;${hsColor}'>${hsSt}</td>"
+            html += "<td class='dsm-col-lastact'  style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
+            html += "<td class='dsm-col-issue'    style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
+            html += "<td class='dsm-col-battery'  style='text-align:center;${battColor}'>${battStr}</td>"
+            html += "<td class='dsm-col-lastbatt' style='white-space:nowrap;font-size:0.9em;'>${it.lastBattery ?: 'n/a'}</td>"
             html += "</tr>"
         }
-        html += "</tbody></table>"
+        html += "</tbody></table></div>"
     }
     return html
 }
@@ -1500,7 +1921,9 @@ function toggleDsmCol(cls, btn) {
 
 // Apply saved column-hide state from localStorage on page load
 (function() {
-    var cols = ['dsm-col-room', 'dsm-col-hub', 'dsm-col-lastact'];
+    var cols = ['dsm-col-room', 'dsm-col-hub', 'dsm-col-hestatus',
+                'dsm-col-healthst', 'dsm-col-lastact', 'dsm-col-issue',
+                'dsm-col-battery', 'dsm-col-lastbatt'];
     cols.forEach(function(cls) {
         var hidden = false;
         try { hidden = localStorage.getItem('dsm_col_' + cls) === 'true'; } catch(e) {}
@@ -1513,7 +1936,11 @@ function toggleDsmCol(cls, btn) {
 })();
 </script>
 <style>
-.on-table { border-collapse:collapse; width:100%; table-layout:fixed; }
+.dsm-scroll-wrap {
+    max-width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    padding-bottom:4px;
+}
+.on-table { border-collapse:collapse; width:100%; }
 .on-table th {
     cursor:pointer; user-select:none;
     background-color: var(--hdr-bg, #FFD700);
@@ -1521,11 +1948,12 @@ function toggleDsmCol(cls, btn) {
     border:1px solid #555; white-space:nowrap; padding:4px 6px;
 }
 .on-table td { border:1px solid #aaa; padding:4px 6px; word-break:break-word; }
+.dsm-health-table th, .dsm-health-table td { overflow-wrap:normal; }
 .on-table th:not(:last-child):hover { opacity:0.85; }
 .on-table th.sort-asc::after  { content:' ▲'; font-size:0.8em; }
 .on-table th.sort-desc::after { content:' ▼'; font-size:0.8em; }
-.on-table td.state-col  { text-align:center; white-space:nowrap; width:1%; }
-.on-table td.hub-col    { white-space:nowrap; width:1%; }
+.on-table td.state-col  { text-align:center; white-space:nowrap; }
+.on-table td.hub-col    { word-break:break-word; }
 .on-table td.state-clickable:hover:not([data-busy='true']) { background-color:rgba(0,0,0,0.06); }
 .toggle-btn {
     font-size:0.8em; padding:2px 8px; cursor:pointer;
@@ -1549,6 +1977,20 @@ function toggleDsmCol(cls, btn) {
 // HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
 
+private String safeString(Object v) {
+    return v == null ? "" : v.toString()
+}
+
+private String htmlEscape(Object val) {
+    String s = val == null ? "" : val.toString()
+    return s
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace("\"", "&quot;")
+        .replace("'", "&#39;")
+}
+
 private boolean hasSwitchCapability(def caps) {
     if (!caps) return true
     def capsList   = (caps instanceof List ? caps : [caps])
@@ -1557,6 +1999,16 @@ private boolean hasSwitchCapability(def caps) {
         def name = (c instanceof Map) ? (c.title ?: c.name ?: "").toString().toLowerCase()
                                       : c?.toString()?.toLowerCase() ?: ""
         name in switchCaps
+    }
+}
+
+private boolean hasLockCapability(def caps) {
+    if (!caps) return false
+    def capsList = (caps instanceof List ? caps : [caps])
+    return capsList.any { c ->
+        def name = (c instanceof Map) ? (c.title ?: c.name ?: "").toString().toLowerCase()
+                                      : c?.toString()?.toLowerCase() ?: ""
+        name == "lock"
     }
 }
 
