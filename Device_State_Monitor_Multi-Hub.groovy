@@ -39,7 +39,7 @@ FEATURES:
 */
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.49",
+    name:         "Device State Monitor Multi-Hub 1.50",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -441,7 +441,6 @@ def mainPage() {
             input "excludeSystemRoom", "bool", title: "Exclude devices in the \"System\" room from all reports?", defaultValue: false
             paragraph("<hr>")
             input "showSectionDetails","bool", title: "Show extra details in section headers?",    defaultValue: true
-            input "largeScreenLayout", "bool", title: "Use large-screen column widths? (wider Hub and Room columns — use when hub names are long)", defaultValue: false, submitOnChange: true
 
             def showHealthForCols = settings["showHealthTable"] != false
             def heStatusBtn  = showHealthForCols ? "<span class='dsm-col-btn' data-dsm-col='dsm-col-hestatus' onclick=\"toggleDsmCol('dsm-col-hestatus',this)\">HE Status</span>"      : ""
@@ -1570,14 +1569,10 @@ private String buildTable(List devices, String title, String tableId,
 
     if (count > 0) {
         def isUnknown  = (toggleCmd == "both")
-        def largeScrn  = settings["largeScreenLayout"] == true
-        def roomW      = largeScrn ? "180px" : "140px"
-        def hubW       = largeScrn ? "200px" : "70px"
         def stateW     = isUnknown ? "125px" : "95px"
-        def minW       = "${(roomW.replace("px","") as int) + (hubW.replace("px","") as int) + 250}px"
         html += "<div class='dsm-scroll-wrap'>"
-        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${minW};'>"
-        html += "<colgroup><col><col class='dsm-col-room' style='width:${roomW}'><col style='width:${hubW}'><col style='width:${stateW}'></colgroup>"
+        html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:300px;'>"
+        html += "<colgroup><col><col class='dsm-col-room col-room'><col class='col-hub'><col style='width:${stateW}'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
@@ -1633,14 +1628,10 @@ private String buildLockTable(List devices, String title, String tableId, String
     def html = "<h4 style='margin-bottom:4px;'>${title}: ${countStr}.</h4><br>"
 
     if (count > 0) {
-        def largeScrn = settings["largeScreenLayout"] == true
-        def roomW     = largeScrn ? "180px" : "140px"
-        def hubW      = largeScrn ? "200px" : "70px"
-        def lockMinW  = "${(roomW.replace("px","") as int) + (hubW.replace("px","") as int) + 250}px"
         html += "<div class='dsm-scroll-wrap'>"
         html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' " +
-                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${lockMinW};'>"
-        html += "<colgroup><col><col class='dsm-col-room' style='width:${roomW}'><col style='width:${hubW}'><col style='width:110px'></colgroup>"
+                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:300px;'>"
+        html += "<colgroup><col><col class='dsm-col-room col-room'><col class='col-hub'><col style='width:110px'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Lock Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
@@ -1703,16 +1694,12 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
         // 0=Device Name, 1=Room, 2=Hub, 3=HE Status, 4=Health Status, 5=Last Activity,
         // 6=Issue, 7=Battery %, 8=Last Battery
         html += "<div class='dsm-scroll-wrap dsm-health-scroll'>"
-        def largeScrn   = settings["largeScreenLayout"] == true
-        def hRoomW      = largeScrn ? 150 : 105
-        def hHubW       = largeScrn ? 200 : 90
-        def hMinW       = 1200 + (hRoomW - 105) + (hHubW - 90)
         html += "<table id='${tableId}' class='on-table dsm-health-table' cellpadding='0' cellspacing='0' " +
-                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:${hMinW}px;'>"
+                "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
         html += "<colgroup>" +
                 "<col style='width:230px'>" +
-                "<col class='dsm-col-room'     style='width:${hRoomW}px'>" +
-                "<col class='dsm-col-hub'      style='width:${hHubW}px'>" +
+                "<col class='dsm-col-room col-health-room'>" +
+                "<col class='dsm-col-hub  col-health-hub'>" +
                 "<col class='dsm-col-hestatus' style='width:110px'>" +
                 "<col class='dsm-col-healthst' style='width:105px'>" +
                 "<col class='dsm-col-lastact'  style='width:150px'>" +
@@ -1934,6 +1921,43 @@ function toggleDsmCol(cls, btn) {
         }
     });
 })();
+// ── Responsive column widths via window.innerWidth (reliable on all mobile browsers) ──
+function dsmApplyColWidths() {
+    var w = window.innerWidth;
+    var small = w <= 767;
+    var cfg = {
+        'col-room':        small ? '140px' : '180px',
+        'col-hub':         small ? '70px'  : '200px',
+        'col-health-room': small ? '105px' : '150px',
+        'col-health-hub':  small ? '90px'  : '200px'
+    };
+    for (var cls in cfg) {
+        document.querySelectorAll('col.' + cls).forEach(function(el) {
+            el.style.width = cfg[cls];
+        });
+    }
+    document.querySelectorAll('.dsm-health-table').forEach(function(el) {
+        el.style.minWidth = small ? '1200px' : '1355px';
+    });
+    // Room column: on any phone-sized screen (≤767px) orientation drives visibility
+    // unconditionally — localStorage is ignored so manual-toggle testing doesn't
+    // permanently override the auto behaviour. On desktop (>767px) the user's
+    // manually saved preference from the toggle button is respected.
+    var roomEls = document.querySelectorAll('.dsm-col-room');
+    var roomBtn = document.querySelector('[data-dsm-col="dsm-col-room"]');
+    if (w <= 767) {
+        var hide = w <= 480;
+        roomEls.forEach(function(el) { el.style.display = hide ? 'none' : ''; });
+        if (roomBtn) roomBtn.className = 'dsm-col-btn' + (hide ? ' dsm-col-hidden' : '');
+    } else {
+        var userHid = false;
+        try { userHid = localStorage.getItem('dsm_col_dsm-col-room') === 'true'; } catch(e) {}
+        roomEls.forEach(function(el) { el.style.display = userHid ? 'none' : ''; });
+        if (roomBtn) roomBtn.className = 'dsm-col-btn' + (userHid ? ' dsm-col-hidden' : '');
+    }
+}
+dsmApplyColWidths();
+window.addEventListener('resize', dsmApplyColWidths);
 </script>
 <style>
 .dsm-scroll-wrap {
@@ -1941,6 +1965,9 @@ function toggleDsmCol(cls, btn) {
     padding-bottom:4px;
 }
 .on-table { border-collapse:collapse; width:100%; }
+/* col-room/col-hub/col-health-* widths are set by dsmApplyColWidths() in JS below,
+   which uses window.innerWidth to avoid CSS viewport-meta ambiguity on mobile. */
+.dsm-health-table { min-width:1200px; } /* JS overrides for large screens */
 .on-table th {
     cursor:pointer; user-select:none;
     background-color: var(--hdr-bg, #FFD700);
