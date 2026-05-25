@@ -1,17 +1,18 @@
 # Device State Monitor Multi-Hub — User Guide
 
-**App version:** 1.43  
+**App version:** 1.50  
 **Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
 
 ---
 
 ## Overview
 
-Device State Monitor Multi-Hub reports device states across up to three Hubitat hubs from a single app page. It provides four live tables:
+Device State Monitor Multi-Hub reports device states across up to three Hubitat hubs from a single app page. It provides five live tables:
 
 - **ON Devices** — switch-capable devices currently reporting ON
 - **OFF Devices** — switch-capable devices currently reporting OFF
 - **Unknown State** — switch-capable devices reporting neither ON nor OFF
+- **Lock State** — explicitly selected lock devices showing their current lock state (locked/unlocked)
 - **Health / Activity Monitor** — any device (switch or otherwise) that is OFFLINE, INACTIVE, NOT PRESENT, or whose last activity exceeds a configurable time threshold
 
 Device names are clickable links to their hub's device edit page. When Maker API credentials are configured, the State cell in the ON and OFF tables is clickable to toggle the device without leaving the page.
@@ -53,7 +54,7 @@ The app page is divided into two zones:
 
 **Top — live report area**
 - **Refresh Table** button — re-queries all hubs immediately and redraws all tables
-- The four report tables (ON, OFF, Unknown, Health/Activity)
+- The five report tables (ON, OFF, Unknown, Lock State, Health/Activity)
 - *Last run* timestamp
 
 **Bottom — collapsed configuration sections**
@@ -62,6 +63,33 @@ The app page is divided into two zones:
 - Notes / User Guide (condensed in-app reference)
 
 Configuration sections are hidden by default once set up, so the report tables are the first thing you see on every visit.
+
+---
+
+## Mobile Support
+
+All five tables are designed to display correctly on both desktop and mobile browsers. Column widths and Room column visibility adjust automatically based on the actual viewport width — no manual setting is required.
+
+### Responsive Column Widths
+
+The Hub and Room columns switch width automatically at a 767 px breakpoint:
+
+| Viewport | Room | Hub | Health Room | Health Hub |
+|---|---|---|---|---|
+| **≤ 767 px** (phone, small tablet) | 140 px | 70 px | 105 px | 90 px |
+| **> 767 px** (tablet landscape, desktop) | 180 px | 200 px | 150 px | 200 px |
+
+The wider Hub column on large screens accommodates long hub names (e.g. "Felida Hubitat C8P Office") on one line. On narrow screens the Hub column word-wraps gracefully. Width switching is driven by `window.innerWidth` in JavaScript rather than CSS media queries, which is necessary because Hubitat's app page does not always set a mobile-appropriate viewport meta tag.
+
+### Room Column Auto-Hide
+
+On any screen **≤ 480 px** wide — all iPhones in portrait orientation — the Room column is hidden automatically. It reappears when the phone is rotated to landscape or the page is opened on a wider screen.
+
+The Room **Hide Columns** toggle button still works in portrait, but any change it makes is overridden on the next orientation change; orientation controls Room on phones. On desktop (> 767 px) the toggle works normally and saves its state to local storage.
+
+### Horizontal Scrolling
+
+Every table is wrapped in a horizontal scroll container. On narrow screens where a table's content is wider than the viewport — particularly the Health / Activity table with its many columns — the table scrolls horizontally without affecting the rest of the page.
 
 ---
 
@@ -74,6 +102,7 @@ Hub #1 is the hub running Device State Monitor. Its devices are accessed directl
 | **Friendly label** | Name shown in the Hub column of all tables. Defaults to the hub's location name. |
 | **Select ON-monitored devices** | Devices that appear in the ON table when their switch state is on. Accepts any switch-capable device. |
 | **Select OFF-monitored devices** | Devices that appear in the OFF table when their switch state is off. A device may be selected in both lists. |
+| **Select lock-monitored devices** | Devices that appear in the Lock State table. Uses a `capability.lock` picker. Virtual lock devices are always included regardless of the Exclude Virtual Devices setting, since these are explicit selections. |
 | **Toggle Command & Health Monitor Settings** | Toggle to reveal Maker API credentials for Hub #1. These are used for two purposes: (1) clickable State cells in the ON/OFF tables and embedded toggle buttons in the Unknown table; (2) the Load / Select All / Clear All actions in the health device picker. If left blank, State cells are non-interactive and health selection reverts to a manual capability picker. |
 | **Hub #1 Health Device List Actions** | Appears once Maker API credentials are entered. Choose **⟳ Load / Reload** to fetch the device list, then **✓ Select All** or **✗ Clear** to bulk-manage health selections. |
 | **Select health/activity-monitored devices** | The capability picker — always visible. Devices selected here appear in the Health/Activity table when flagged. Disabled devices are automatically excluded. |
@@ -96,7 +125,7 @@ Toggle **Enable Hub #2?** (or #3) to on. The connection settings expand automati
 | **Hub IP address** | Local LAN IP of the remote hub (e.g. 192.168.1.100). |
 | **Maker API app ID** | The number shown in the Maker API app heading on the remote hub. |
 | **Maker API access token** | The token from the Maker API app on the remote hub. |
-| **Last load status** | Shown in green (OK) or red (error) after a Load/Reload action. Displays counts of switch devices loaded, enabled devices, and disabled devices detected. |
+| **Last load status** | Shown in green (OK) or red (error) after a Load/Reload action. Displays counts of switch and lock devices loaded, enabled devices, and disabled devices detected. |
 
 ### Actions Dropdown
 
@@ -109,14 +138,18 @@ All bulk device management for remote hubs is done through the **Actions** dropd
 | **✗ Clear ON-monitored devices** | Removes all ON monitoring selections. |
 | **✓ Select All OFF-monitored devices** | Selects all switch-capable devices for OFF monitoring. |
 | **✗ Clear OFF-monitored devices** | Removes all OFF monitoring selections. |
+| **✓ Select All lock-monitored devices** | Selects all lock-capable devices for lock state monitoring. |
+| **✗ Clear lock-monitored devices** | Removes all lock monitoring selections. |
 | **✓ Select All health-monitored devices** | Selects all devices (switch and non-switch) for health/activity monitoring. |
 | **✗ Clear health-monitored devices** | Removes all health monitoring selections. |
 
 ### Device Pickers
 
-After loading, three pickers appear:
+After loading, four pickers appear:
 
 **Switch Device Selection** — shows only switch-capable devices. Use the **Filter by name or room** field to narrow a long list. The ON-monitored and OFF-monitored pickers each show the count of devices available in the loaded list.
+
+**Lock Device selector** — shows only lock-capable devices exposed to the Maker API. Select the devices whose lock state you want to appear in the Lock State table.
 
 **Health / Activity device selector** — shows all devices exposed to the Maker API, not just switch-capable ones, so you can monitor sensors, remotes, and other non-switch devices for activity.
 
@@ -151,6 +184,21 @@ Click the State cell (showing **OFF**) to send an **on** command.
 
 Lists monitored devices reporting a switch state other than on or off (e.g. null, initializing, or an unrecognized value). Can be hidden in Sort & Display Options. When Maker API credentials are configured, the State cell contains **→ ON** and **→ OFF** mini-buttons to send either command.
 
+### Lock State Table
+
+Lists all explicitly selected lock devices and their current lock state. Devices are selected per hub:
+
+- **Hub #1** — use the **Select lock-monitored devices** capability picker in the Hub #1 section.
+- **Hubs #2 and #3** — use the **Lock Device selector** that appears after running Load / Reload.
+
+| Lock State | Display |
+|---|---|
+| **locked** | Green, bold |
+| **unlocked** | Red, bold |
+| **unknown** or other | Gray |
+
+The table can be hidden in Sort & Display Options. Virtual lock devices (e.g. Virtual Lock driver) are always shown regardless of the **Exclude virtual devices** setting, because they are individually hand-picked rather than bulk-selected.
+
 ### Health / Activity Monitor Table
 
 Lists any health-monitored device that meets one or more of:
@@ -166,6 +214,20 @@ Lists any health-monitored device that meets one or more of:
 The **Issue** column may contain multiple reasons separated by commas if more than one condition applies.
 
 For child devices (e.g. individual endpoints of a USB switch hub), last activity is resolved from the parent device if the child has no activity record of its own.
+
+The table contains the following columns, all independently hideable via the Hide Columns toggle bar:
+
+| Column | Description |
+|---|---|
+| **Device Name** | Clickable link to the device edit page |
+| **Room** | Room the device is assigned to |
+| **Hub** | Friendly hub label |
+| **HE Status** | Hubitat's reported device status (OFFLINE, INACTIVE, NOT PRESENT, ACTIVE, etc.) — shown in red when problematic |
+| **Health Status** | Value of the device's `healthStatus` attribute — green for online, red for offline |
+| **Last Activity** | Timestamp of the most recent device event, color-coded by age |
+| **Issue** | Summary of the condition(s) that caused the device to appear in this table |
+| **Battery %** | Current battery level — green ≥ 40 %, orange 20–39 %, red < 20 % |
+| **Last Battery** | Timestamp of the last battery report |
 
 ---
 
@@ -198,6 +260,7 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 
 **ON / OFF tables:** sortable by Device Name, Room, or Hub.  
 **Unknown State table:** same columns.  
+**Lock State table:** sortable by Device Name, Room, Hub, or Lock State.  
 **Health / Activity table:** sortable by Device Name, Room, Hub, HE Status, or Last Activity.
 
 ### Show/Hide Tables
@@ -205,6 +268,7 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 | Control | Effect |
 |---|---|
 | **Show Unknown State table?** | Hides or shows the Unknown table. Default: on. |
+| **Show Lock State table?** | Hides or shows the Lock State table. Default: on. |
 | **Show Health/Activity Monitor table?** | Hides or shows the Health table. Default: on. |
 
 ### Activity Threshold
@@ -215,29 +279,36 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 
 | Control | Effect |
 |---|---|
-| **Exclude virtual devices** | Omits virtual devices from all four tables. "Virtual" is identified by driver type name containing "virtual", or device name starting with "VD " (a naming convention for virtual devices). |
-| **Exclude devices in the "System" room** | Omits devices assigned to the Hubitat room named "System" from all four tables. |
+| **Exclude virtual devices** | Omits virtual devices from the ON, OFF, Unknown, and Health/Activity tables. "Virtual" is identified by driver type name containing "virtual", or device name starting with "VD " (a naming convention for virtual devices). Lock devices are exempt — they are always shown regardless of this setting because they are individually selected rather than bulk-included. |
+| **Exclude devices in the "System" room** | Omits devices assigned to the Hubitat room named "System" from all five tables. |
 
 ### Display Options
 
 | Control | Effect |
 |---|---|
-| **Show extra details in section headers?** | Appends monitored device counts to each hub section header (e.g. "Hub #3 – Office — 15 ON / 15 OFF / 47 Health monitored"). |
+| **Show extra details in section headers?** | Appends monitored device counts to each hub section header (e.g. "Hub #3 – Office — 15 ON / 15 OFF / 4 Lock / 47 Health monitored"). |
 | **Enable debug logging?** | Writes detailed log entries to the Hubitat log for each device checked during a refresh. Useful for diagnosing missing or incorrect data. Disable when not troubleshooting — it generates a large number of log entries for hubs with many selected devices. |
 
 ### Hide Columns
 
-Three toggle buttons at the bottom of Sort & Display Options control column visibility across all tables:
+Eight toggle buttons at the bottom of Sort & Display Options control column visibility. They appear in the same left-to-right order as the columns they control.
 
-| Button | Columns hidden |
-|---|---|
-| **Room** | Room column in the ON, OFF, Unknown, and Health tables |
-| **Hub** | Hub column in the same four tables |
-| **Last Activity** | Last Activity column in the Health / Activity table only (button appears only when the Health table is enabled) |
+| Button | Applies to | Columns hidden |
+|---|---|---|
+| **Room** | All five tables | Room column |
+| **Hub** | All five tables | Hub column |
+| **HE Status** | Health / Activity table | HE Status column |
+| **Health Status** | Health / Activity table | Health Status column |
+| **Last Activity** | Health / Activity table | Last Activity column |
+| **Issue** | Health / Activity table | Issue column |
+| **Battery %** | Health / Activity table | Battery % column |
+| **Last Battery** | Health / Activity table | Last Battery column |
 
-Click a button to hide the column; click again to show it. The button text is struck through while the column is hidden. Visibility choices are saved in the browser's local storage and restored automatically on every subsequent page load — no Refresh or Save required.
+The six Health-table-specific buttons appear only when the Health / Activity table is enabled.
 
-Hiding the Room, Hub, and Last Activity columns is particularly useful on narrow screens (e.g. a phone in portrait orientation), where it frees significant horizontal space for the Device Name, HE Status, and Issue columns.
+Click a button to hide the column; click again to show it. The button text is struck through while the column is hidden. On desktop (viewport > 767 px), visibility choices are saved in the browser's local storage and restored automatically on every subsequent page load — no Refresh or Save required.
+
+**Room column on mobile:** The Room column is automatically hidden on portrait phones and shown in landscape — the Hide Columns toggle has no persistent effect on phone-sized screens. See [Mobile Support](#mobile-support) for details. The Health / Activity table has a horizontal scroll wrapper so all of its columns remain accessible at their minimum widths on any screen size.
 
 ### Notes / User Guide
 
@@ -248,11 +319,11 @@ A collapsible **Notes / User Guide** section appears below Sort & Display Option
 ## Typical First-Time Setup Sequence
 
 1. Install the app on Hub #1 via **Apps → + Add User App**.
-2. Open the app. The four report tables appear (empty) and configuration sections are below.
-3. Expand **Hub #1**. Set a friendly label. Select devices for ON, OFF, and health monitoring.
+2. Open the app. The five report tables appear (empty) and configuration sections are below.
+3. Expand **Hub #1**. Set a friendly label. Select devices for ON, OFF, lock, and health monitoring.
 4. To enable clickable State cells and health Select All/Clear All on Hub #1: toggle **Show / Edit Toggle Command & Health Monitor Settings**, enter Maker API credentials for Hub #1, then use the **Hub #1 Health Device List Actions** dropdown to Load and Select All.
-5. For each remote hub: expand its section, toggle **Enable**, expand **Connection Settings**, enter IP/App ID/Token, collapse Connection Settings, then choose **⟳ Load / Reload Device List** from the Actions dropdown. After loading, use Select All actions and adjust individual selections as needed.
-6. Expand **Sort & Display Options**. Set activity threshold, sort preferences, and filtering options. Use **Hide Columns** to hide Room, Hub, and/or Last Activity columns if desired (handy on mobile).
+5. For each remote hub: expand its section, toggle **Enable**, expand **Connection Settings**, enter IP/App ID/Token, collapse Connection Settings, then choose **⟳ Load / Reload Device List** from the Actions dropdown. After loading, use Select All actions and adjust individual selections as needed (including lock devices).
+6. Expand **Sort & Display Options**. Set activity threshold, sort preferences, and filtering options. Use **Hide Columns** to control which columns appear on desktop — Room and Hub apply to all tables; the six Health-specific buttons apply to the Health table only. Room visibility on phones is managed automatically by orientation (see Mobile Support).
 7. Click **Refresh Table** at the top of the page to run the first full report.
 8. Click **Done** to save.
 
