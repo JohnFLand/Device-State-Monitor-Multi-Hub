@@ -1,6 +1,6 @@
 # Device State Monitor Multi-Hub — User Guide
 
-**App version:** 1.50  
+**App version:** 1.51  
 **Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
 
 ---
@@ -13,7 +13,7 @@ Device State Monitor Multi-Hub reports device states across up to three Hubitat 
 - **OFF Devices** — switch-capable devices currently reporting OFF
 - **Unknown State** — switch-capable devices reporting neither ON nor OFF
 - **Lock State** — explicitly selected lock devices showing their current lock state (locked/unlocked)
-- **Health / Activity Monitor** — any device (switch or otherwise) that is OFFLINE, INACTIVE, NOT PRESENT, or whose last activity exceeds a configurable time threshold
+- **Health / Activity Monitor** — any device (switch or otherwise) that is OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or whose last activity exceeds a configurable time threshold
 
 Device names are clickable links to their hub's device edit page. When Maker API credentials are configured, the State cell in the ON and OFF tables is clickable to toggle the device without leaving the page.
 
@@ -203,11 +203,12 @@ The table can be hidden in Sort & Display Options. Virtual lock devices (e.g. Vi
 
 Lists any health-monitored device that meets one or more of:
 
-| HE Status | Meaning |
+| HE Status / Attribute | Meaning |
 |---|---|
 | **OFFLINE** | Hub reports device is offline |
 | **INACTIVE** | Hub reports device is inactive |
 | **NOT PRESENT** | Hub reports device is not present (typically for presence sensors) |
+| **DISCONNECTED** | Device's `connectionStatus` attribute reports disconnected (e.g. MQTT Display Publisher and similar devices) |
 | **HEALTH OFFLINE** | Device's `healthStatus` attribute reports offline (shown when HE status itself is absent) |
 | **Late Activity (>Xh)** | Last recorded device activity is older than the configured threshold |
 
@@ -222,7 +223,7 @@ The table contains the following columns, all independently hideable via the Hid
 | **Device Name** | Clickable link to the device edit page |
 | **Room** | Room the device is assigned to |
 | **Hub** | Friendly hub label |
-| **HE Status** | Hubitat's reported device status (OFFLINE, INACTIVE, NOT PRESENT, ACTIVE, etc.) — shown in red when problematic |
+| **HE Status** | Hubitat's reported device status (OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, ACTIVE, etc.) — shown in red when problematic |
 | **Health Status** | Value of the device's `healthStatus` attribute — green for online, red for offline |
 | **Last Activity** | Timestamp of the most recent device event, color-coded by age |
 | **Issue** | Summary of the condition(s) that caused the device to appear in this table |
