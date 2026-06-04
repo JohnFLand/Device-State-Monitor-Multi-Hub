@@ -4,6 +4,7 @@ Device State Monitor Multi-Hub
 PURPOSE: Report switch device states across up to three Hubitat hubs,
          with clickable State cells to turn devices ON or OFF instantly.
          Also reports devices that are OFFLINE, INACTIVE, NOT PRESENT,
+         DISCONNECTED (e.g. MQTT Display Publisher),
          or whose last activity exceeds a configurable time threshold.
 
 FEATURES:
@@ -21,7 +22,8 @@ FEATURES:
       Toggle commands for Hubs #2 & #3 reuse their existing Maker API credentials.
     * Optional Unknown State table catches devices reporting neither on nor off.
     * Health / Activity Monitor table shows any selected device that is OFFLINE,
-      INACTIVE, NOT PRESENT, or has last activity older than X hours (configurable).
+      INACTIVE, NOT PRESENT, DISCONNECTED (connectionStatus attribute),
+      or has last activity older than X hours (configurable).
     * Each hub has its own Health/Activity device selector. Remote hubs expose ALL
       Maker API devices (not just switch-capable) in the health selector.
     * Optional toggle to exclude virtual devices from all reports, including the
@@ -39,7 +41,7 @@ FEATURES:
 */
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.50",
+    name:         "Device State Monitor Multi-Hub 1.51",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -152,7 +154,7 @@ def mainPage() {
             }
 
             paragraph("<hr><b>Devices to monitor for health / activity — Hub #1</b> " +
-                      "<small>(flagged when OFFLINE, INACTIVE, NOT PRESENT, or activity overdue)</small>")
+                      "<small>(flagged when OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or activity overdue)</small>")
 
             def hub1ApiReady = (settings["hub1AppId"] && settings["hub1Token"])
             if (hub1ApiReady) {
@@ -453,7 +455,7 @@ def mainPage() {
                 "<div class='dsm-col-toggle-bar'>" +
                 "<span class='dsm-col-btn' data-dsm-col='dsm-col-room' onclick=\"toggleDsmCol('dsm-col-room',this)\">Room</span>" +
                 "<span class='dsm-col-btn' data-dsm-col='dsm-col-hub'  onclick=\"toggleDsmCol('dsm-col-hub',this)\">Hub</span>" +
-                heStatusBtn + healthStBtn + lastActBtn + issueBtn + batteryBtn + lastBattBtn +
+                issueBtn + heStatusBtn + healthStBtn + lastActBtn + batteryBtn + lastBattBtn +
                 "</div>")
 
             paragraph("<hr>")
@@ -481,7 +483,7 @@ def mainPage() {
                 "Locked is shown in green, unlocked in red.</li>" +
                 "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
                 "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, HE Status, " +
-                "Health Status, Last Activity, Issue, Battery %, Last Battery.</li>" +
+                "Issue, HE Status, Health Status, Last Activity, Battery %, Last Battery.</li>" +
                 "</ul>" +
                 "Device names are clickable links to the device edit page. " +
                 "Devices monitored in both the ON and OFF lists are flagged with a gold star (★) and shown in orange." +
@@ -515,7 +517,7 @@ def mainPage() {
                 "<b>Hide Columns</b> — eight toggle buttons control column visibility. " +
                 "<b>Room</b> and <b>Hub</b> apply to all four tables. " +
                 "The remaining six apply to the Health / Activity table only: " +
-                "<b>HE Status</b>, <b>Health Status</b>, <b>Last Activity</b>, <b>Issue</b>, <b>Battery %</b>, <b>Last Battery</b>. " +
+                "<b>Issue</b>, <b>HE Status</b>, <b>Health Status</b>, <b>Last Activity</b>, <b>Battery %</b>, <b>Last Battery</b>. " +
                 "Buttons appear in the same left-to-right order as the columns they control. " +
                 "The Health / Activity table also has a horizontal scroll wrapper " +
                 "so columns keep usable minimum widths instead of overlapping. Column visibility is saved in the browser's local storage and " +
@@ -610,7 +612,7 @@ private void renderRemoteHealthDeviceSelector(int hubNum, def allDevices, List h
     def total = allDevices.size()
     paragraph("<hr><b>Devices to monitor for health / activity — Hub #${hubNum}</b> &nbsp;" +
               "<small>(${healthSel.size()} selected of ${total} available — includes all device types)</small>")
-    paragraph("<small><i>Flagged when OFFLINE, INACTIVE, NOT PRESENT, or last activity exceeds threshold.</i></small>")
+    paragraph("<small><i>Flagged when OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or last activity exceeds threshold.</i></small>")
     def opts = buildRemoteHealthDeviceOptions(hubNum)
     def filterNote = settings["hub${hubNum}Filter"] ? " — filtered" : ""
     if (opts != null && opts.size() > 0) {
@@ -946,17 +948,33 @@ private Map collectAllDeviceStates() {
                      lockVal: dev.currentValue("lock")?.toString()?.toLowerCase() ?: "unknown"]
     }
     // Health pool – Hub #1
-    // Uses hub1HealthDevs (capability.* input) for direct device object access —
-    // no HTTP call needed and gives accurate .getStatus() / .getLastActivity() data.
-    // Select All / Clear All syncs hub1HealthDevs via app.updateSetting in the UI.
-    (hub1HealthDevs ?: []).findAll(filterLocal).each { dev ->
-        def rawStatus   = dev.getStatus()?.toUpperCase() ?: ""
-        def rawHealthSt = (dev.currentHealthStatus ?: "").toString().toLowerCase()
-        def lastAct     = resolveLocalLastActivity(dev)
-        def lateActivity = lastAct ? ((now.time - lastAct.time) > activityThresholdMs) : true
-        def statusBad   = rawStatus in ["OFFLINE", "INACTIVE", "NOT PRESENT"]
-        def healthBad   = rawHealthSt == "offline"
-        if (!(statusBad || healthBad || lateActivity)) return
+    // Primary source: hub1HealthDevs (capability.* picker) — direct device objects.
+    // Supplementary: hub1SelectedHealthDevices (enum/ID list from Maker API load path) —
+    // resolves IDs via getDeviceById() to catch devices that don't surface in the
+    // capability.* picker (e.g. Actuator-only drivers like MQTT Display Publisher).
+    def hub1HealthDevObjs = (hub1HealthDevs ?: []) as List
+    def hub1HealthDevIds  = hub1HealthDevObjs.collect { it.id.toString() } as Set
+    def hub1SelectedIds   = normalizeSelectionList(settings["hub1SelectedHealthDevices"])
+    hub1SelectedIds.each { sid ->
+        if (!hub1HealthDevIds.contains(sid)) {
+            try {
+                def extra = getDeviceById(sid)
+                if (extra) hub1HealthDevObjs << extra
+            } catch (ex) {
+                if (enableLogging) log.debug "Hub #1 health: could not resolve device ID ${sid} — ${ex.message}"
+            }
+        }
+    }
+    hub1HealthDevObjs.findAll(filterLocal).each { dev ->
+        def rawStatus      = dev.getStatus()?.toUpperCase() ?: ""
+        def rawHealthSt    = (dev.currentHealthStatus ?: "").toString().toLowerCase()
+        def connStatus     = (dev.currentValue("connectionStatus") ?: "").toString().toLowerCase()
+        def lastAct        = resolveLocalLastActivity(dev)
+        def lateActivity   = lastAct ? ((now.time - lastAct.time) > activityThresholdMs) : true
+        def statusBad      = rawStatus in ["OFFLINE", "INACTIVE", "NOT PRESENT"]
+        def healthBad      = rawHealthSt == "offline"
+        def connBad        = connStatus == "disconnected"
+        if (!(statusBad || healthBad || connBad || lateActivity)) return
         def lastActStr  = lastAct ? lastAct.format("yyyy-MM-dd hh:mm a", location.timeZone)
                                   : "<span style='color:red;'>Never</span>"
         def lastBattStr = "n/a"
@@ -973,10 +991,10 @@ private Map collectAllDeviceStates() {
             room           : resolveLocalRoom(dev, roomMap),
             hub            : hub1LabelVal,
             linkUrl        : "/device/edit/${dev.id}",
-            status         : rawStatus ?: (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—")),
+            status         : rawStatus ?: (connBad ? "DISCONNECTED" : (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—"))),
             lastActivity   : lastAct,
             lastActivityStr: lastActStr,
-            issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours),
+            issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, connBad, lateActivity, activityThreshHours),
             healthStatus   : rawHealthSt ?: "n/a",
             battery        : dev.currentValue("battery")?.toString() ?: "n/a",
             lastBattery    : lastBattStr
@@ -1371,11 +1389,21 @@ private List fetchRemoteHealthDeviceStates(String ip, String appId, String token
                 }
                 // ─────────────────────────────────────────────────────────────
 
+                // connectionStatus attribute (e.g. MQTT Display Publisher driver)
+                def connStatus = ""
+                if (attrsField instanceof List) {
+                    def cs = attrsField.find { a -> a?.name?.toString() == "connectionStatus" }
+                    connStatus = cs?.currentValue?.toString()?.toLowerCase() ?: ""
+                } else if (attrsField instanceof Map) {
+                    connStatus = attrsField["connectionStatus"]?.toString()?.toLowerCase() ?: ""
+                }
+
                 def statusBad    = rawStatus in ["OFFLINE", "INACTIVE", "NOT PRESENT"]
                 def healthBad    = rawHealthSt == "offline"
+                def connBad      = connStatus == "disconnected"
                 def lateActivity = lastActDate ? ((now.time - lastActDate.time) > activityThresholdMs) : true
 
-                if (!(statusBad || healthBad || lateActivity)) return
+                if (!(statusBad || healthBad || connBad || lateActivity)) return
 
                 def lastActStr = lastActDate
                     ? lastActDate.format("yyyy-MM-dd hh:mm a", location.timeZone)
@@ -1386,10 +1414,10 @@ private List fetchRemoteHealthDeviceStates(String ip, String appId, String token
                     displayName    : (dev.label ?: dev.name ?: "Unknown").toString(),
                     room           : (dev.room ?: "—").toString(),
                     linkUrl        : "http://${ip}/device/edit/${devId}",
-                    status         : rawStatus ?: (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—")),
+                    status         : rawStatus ?: (connBad ? "DISCONNECTED" : (rawHealthSt == "offline" ? "OFFLINE" : (rawHealthSt == "online" ? "ONLINE" : "—"))),
                     lastActivity   : lastActDate,
                     lastActivityStr: lastActStr,
-                    issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, lateActivity, activityThreshHours),
+                    issue          : buildHealthIssueLabel(rawStatus, rawHealthSt, connBad, lateActivity, activityThreshHours),
                     healthStatus   : rawHealthSt ?: "n/a",
                     battery        : batteryVal,
                     lastBattery    : lastBattVal
@@ -1461,11 +1489,12 @@ private Date parseRemoteLastActivity(def laVal, String hubLabel, def devId) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 private String buildHealthIssueLabel(String rawStatus, String rawHealthSt,
-                                     boolean lateActivity, long threshHours) {
+                                     boolean connBad, boolean lateActivity, long threshHours) {
     def reasons = []
     if (rawStatus in ["OFFLINE", "INACTIVE", "NOT PRESENT"]) reasons << rawStatus
     // Only add HEALTH OFFLINE if it's not already covered by rawStatus == "OFFLINE"
     if (rawHealthSt == "offline" && !reasons.contains("OFFLINE")) reasons << "HEALTH OFFLINE"
+    if (connBad) reasons << "DISCONNECTED"
     if (lateActivity) reasons << "Late Activity (>${threshHours}h)"
     return reasons ? reasons.join(", ") : "—"
 }
@@ -1668,8 +1697,8 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
     switch (sortBy) {
         case "room":         sortColIdx = 1; break
         case "hub":          sortColIdx = 2; break
-        case "status":       sortColIdx = 3; break
-        case "lastActivity": sortColIdx = 5; break
+        case "status":       sortColIdx = 4; break
+        case "lastActivity": sortColIdx = 6; break
         default:             sortColIdx = 0; break
     }
     def sortClass = (sortOrder == "desc") ? "sort-desc" : "sort-asc"
@@ -1687,12 +1716,12 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
 
     def countStr = (count > 0) ? "${count} device${count == 1 ? '' : 's'}" : "No devices"
     def html = "<h4 style='margin-bottom:4px;'>${title}: ${countStr}.</h4>" +
-               "<small><i>Flagged when OFFLINE, INACTIVE, NOT PRESENT, or last activity &gt; ${threshHours}h ago.</i></small><br>"
+               "<small><i>Flagged when OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or last activity &gt; ${threshHours}h ago.</i></small><br>"
 
     if (count > 0) {
         // Columns 0-8 are always in the DOM so sort indices stay stable regardless of hide state:
-        // 0=Device Name, 1=Room, 2=Hub, 3=HE Status, 4=Health Status, 5=Last Activity,
-        // 6=Issue, 7=Battery %, 8=Last Battery
+        // 0=Device Name, 1=Room, 2=Hub, 3=Issue, 4=HE Status, 5=Health Status, 6=Last Activity,
+        // 7=Battery %, 8=Last Battery
         html += "<div class='dsm-scroll-wrap dsm-health-scroll'>"
         html += "<table id='${tableId}' class='on-table dsm-health-table' cellpadding='0' cellspacing='0' " +
                 "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;'>"
@@ -1700,10 +1729,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
                 "<col style='width:230px'>" +
                 "<col class='dsm-col-room col-health-room'>" +
                 "<col class='dsm-col-hub  col-health-hub'>" +
+                "<col class='dsm-col-issue'    style='width:190px'>" +
                 "<col class='dsm-col-hestatus' style='width:110px'>" +
                 "<col class='dsm-col-healthst' style='width:105px'>" +
                 "<col class='dsm-col-lastact'  style='width:150px'>" +
-                "<col class='dsm-col-issue'    style='width:190px'>" +
                 "<col class='dsm-col-battery'  style='width:75px'>" +
                 "<col class='dsm-col-lastbatt' style='width:145px'>" +
                 "</colgroup>"
@@ -1711,10 +1740,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Device Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='dsm-col-hestatus ${sortColIdx == 3 ? sortClass : ""}'>HE Status</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='dsm-col-healthst'>Health Status</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",5)' class='dsm-col-lastact ${sortColIdx == 5 ? sortClass : ""}'>Last Activity</th>"
-        html += "<th onclick='sortOnTable(\"${tableId}\",6)' class='dsm-col-issue'>Issue</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='dsm-col-issue'>Issue</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='dsm-col-hestatus ${sortColIdx == 4 ? sortClass : ""}'>HE Status</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",5)' class='dsm-col-healthst'>Health Status</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",6)' class='dsm-col-lastact ${sortColIdx == 6 ? sortClass : ""}'>Last Activity</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",7)' class='dsm-col-battery'>Battery %</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",8)' class='dsm-col-lastbatt'>Last Battery</th>"
         html += "</tr></thead><tbody>"
@@ -1737,10 +1766,10 @@ private String buildHealthTable(List devices, String title, String tableId, Stri
             html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
             html += "<td class='dsm-col-room'>${it.room}</td>"
             html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
+            html += "<td class='dsm-col-issue'    style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
             html += "<td class='dsm-col-hestatus' style='${statusStyle}'>${it.status}</td>"
             html += "<td class='dsm-col-healthst' style='text-align:center;${hsColor}'>${hsSt}</td>"
             html += "<td class='dsm-col-lastact'  style='white-space:nowrap;font-size:0.9em;'>${it.lastActivityStr}</td>"
-            html += "<td class='dsm-col-issue'    style='color:#CC4400;font-size:0.9em;white-space:normal;'>${it.issue}</td>"
             html += "<td class='dsm-col-battery'  style='text-align:center;${battColor}'>${battStr}</td>"
             html += "<td class='dsm-col-lastbatt' style='white-space:nowrap;font-size:0.9em;'>${it.lastBattery ?: 'n/a'}</td>"
             html += "</tr>"
