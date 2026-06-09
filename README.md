@@ -1,6 +1,6 @@
 # Device State Monitor Multi-Hub — User Guide
 
-**App version:** 1.51  
+**App version:** 1.52  
 **Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
 
 ---
@@ -12,8 +12,10 @@ Device State Monitor Multi-Hub reports device states across up to three Hubitat 
 - **ON Devices** — switch-capable devices currently reporting ON
 - **OFF Devices** — switch-capable devices currently reporting OFF
 - **Unknown State** — switch-capable devices reporting neither ON nor OFF
-- **Lock State** — explicitly selected lock devices showing their current lock state (locked/unlocked)
+- **Lock State** — explicitly selected lock devices showing their current lock state (locked/unlocked) and battery level
 - **Health / Activity Monitor** — any device (switch or otherwise) that is OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or whose last activity exceeds a configurable time threshold
+
+Above the tables, a **Hubitat Safety Monitor (HSM)** status badge shows the current intrusion arm state and any active alert.
 
 Device names are clickable links to their hub's device edit page. When Maker API credentials are configured, the State cell in the ON and OFF tables is clickable to toggle the device without leaving the page.
 
@@ -54,6 +56,7 @@ The app page is divided into two zones:
 
 **Top — live report area**
 - **Refresh Table** button — re-queries all hubs immediately and redraws all tables
+- **HSM Status** and **HSM Alert** badges (if HSM is installed)
 - The five report tables (ON, OFF, Unknown, Lock State, Health/Activity)
 - *Last run* timestamp
 
@@ -197,7 +200,9 @@ Lists all explicitly selected lock devices and their current lock state. Devices
 | **unlocked** | Red, bold |
 | **unknown** or other | Gray |
 
-The table can be hidden in Sort & Display Options. Virtual lock devices (e.g. Virtual Lock driver) are always shown regardless of the **Exclude virtual devices** setting, because they are individually hand-picked rather than bulk-selected.
+The table also includes a **Battery %** column showing the current battery level for each lock. Color coding matches the Health / Activity table: green ≥ 40 %, orange 20–39 %, red < 20 %. Locks with no battery attribute report *n/a*.
+
+The table can be hidden in Sort & Display Options. It is sortable by Device Name, Room, Hub, Lock State, or Battery %. Virtual lock devices (e.g. Virtual Lock driver) are always shown regardless of the **Exclude virtual devices** setting, because they are individually hand-picked rather than bulk-selected.
 
 ### Health / Activity Monitor Table
 
@@ -232,6 +237,48 @@ The table contains the following columns, all independently hideable via the Hid
 
 ---
 
+## Hubitat Safety Monitor (HSM) Status
+
+When HSM is installed on Hub #1, two status lines appear above the report tables on every Refresh.
+
+### HSM Status
+
+Shows the current intrusion arm state as a color-coded badge:
+
+| Status | Color | Meaning |
+|---|---|---|
+| **Armed Away** | Red | Intrusion alerts armed for Away mode |
+| **Arming Away…** | Orange | Exit delay in progress before Armed Away activates |
+| **Armed Home** | Orange | Intrusion alerts armed for Home mode |
+| **Arming Home…** | Orange | Exit delay in progress before Armed Home activates |
+| **Armed Night** | Purple | Intrusion alerts armed for Night mode |
+| **Arming Night…** | Purple | Exit delay in progress before Armed Night activates |
+| **Disarmed** | Green | Intrusion alerts disarmed |
+| **All Disarmed** | Green | Intrusion, smoke, water, and custom rule alerts all disarmed |
+
+> **Note:** `hsmStatus` only reflects the intrusion arm state. Smoke and water monitoring rules are armed separately via HSM's internal rule engine and do not change `hsmStatus`. The badge may therefore show **Disarmed** even when smoke/water rules are active — this is a Hubitat platform limitation, not a bug.
+
+### HSM Alert
+
+Shows the most recent active alert, or **No current alert** in green when none is present. When an alert is active, the label blinks red.
+
+| Alert | Label |
+|---|---|
+| `intrusion` | INTRUSION (Away) |
+| `intrusion-home` | INTRUSION (Home) |
+| `intrusion-night` | INTRUSION (Night) |
+| `smoke` | SMOKE |
+| `water` | WATER LEAK |
+| `rule` | CUSTOM RULE |
+
+The app subscribes to Hubitat's `hsmAlert` location event and stores the active alert in app state. When HSM cancels the alert, the `cancel` event automatically clears the stored value and the badge returns to **No current alert** on the next Refresh.
+
+> **Important:** After installing or updating to version 1.52, open the app and click **Done** once to register the `hsmAlert` subscription. Without this step the handler will not be active until the next hub reboot or app save.
+
+The HSM badges can be hidden via the **Show HSM status above the tables?** toggle in Sort & Display Options.
+
+---
+
 ## Clickable State Cells
 
 State cells are interactive in the ON, OFF, and Unknown tables when Maker API credentials are configured for the relevant hub. They work as follows:
@@ -261,7 +308,7 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 
 **ON / OFF tables:** sortable by Device Name, Room, or Hub.  
 **Unknown State table:** same columns.  
-**Lock State table:** sortable by Device Name, Room, Hub, or Lock State.  
+**Lock State table:** sortable by Device Name, Room, Hub, Lock State, or Battery %.  
 **Health / Activity table:** sortable by Device Name, Room, Hub, HE Status, or Last Activity.
 
 ### Show/Hide Tables
@@ -287,6 +334,7 @@ Each table has independent **Sort by** and **Order** controls. The sort applied 
 
 | Control | Effect |
 |---|---|
+| **Show HSM status above the tables?** | Shows or hides the HSM Status and HSM Alert badges at the top of the report area. Default: on. Has no effect if HSM is not installed. |
 | **Show extra details in section headers?** | Appends monitored device counts to each hub section header (e.g. "Hub #3 – Office — 15 ON / 15 OFF / 4 Lock / 47 Health monitored"). |
 | **Enable debug logging?** | Writes detailed log entries to the Hubitat log for each device checked during a refresh. Useful for diagnosing missing or incorrect data. Disable when not troubleshooting — it generates a large number of log entries for hubs with many selected devices. |
 
