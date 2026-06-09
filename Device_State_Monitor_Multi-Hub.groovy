@@ -41,7 +41,7 @@ FEATURES:
 */
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.51",
+    name:         "Device State Monitor Multi-Hub 1.52",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports ON/OFF/unknown switch states and health/activity status across up to three hubs",
@@ -417,7 +417,7 @@ def mainPage() {
                 title: "Show Lock State table?",
                 defaultValue: true, submitOnChange: true
             if (settings["showLockTable"] != false) {
-                input "sortByLock",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub", "lockVal": "Lock State"], defaultValue: "displayName", submitOnChange: true
+                input "sortByLock",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub", "lockVal": "Lock State", "battery": "Battery %"], defaultValue: "displayName", submitOnChange: true
                 input "sortOrderLock", "enum", title: "Order",   options: ["asc": "Ascending", "desc": "Descending"],                                             defaultValue: "asc",          submitOnChange: true
             }
 
@@ -441,6 +441,8 @@ def mainPage() {
             paragraph("<hr>")
             input "excludeVirtual",    "bool", title: "Exclude virtual devices from all reports (including Health/Activity table)?", defaultValue: false
             input "excludeSystemRoom", "bool", title: "Exclude devices in the \"System\" room from all reports?", defaultValue: false
+            paragraph("<hr>")
+            input "showHsmStatus",     "bool", title: "Show Hubitat Safety Monitor (HSM) status above the tables?", defaultValue: true
             paragraph("<hr>")
             input "showSectionDetails","bool", title: "Show extra details in section headers?",    defaultValue: true
 
@@ -470,6 +472,12 @@ def mainPage() {
 
                 "<hr><b>Page Layout</b><br>" +
                 "The <b>Refresh Table</b> button and all four report tables appear at the top of the page. " +
+                "If HSM is installed, its current intrusion-arm status appears above the tables as a colour-coded badge. " +
+                "Active HSM alerts (intrusion, smoke, water, custom rules) are shown separately as a blinking red line — " +
+                "the app subscribes to <i>hsmAlert</i> events and stores the active alert in app state, clearing it automatically when HSM cancels the alert. " +
+                "Note: HSM's <i>hsmStatus</i> only reflects intrusion arming (Away / Home / Night / Disarmed). " +
+                "Smoke and water monitoring rules arm separately via <i>hsmRules</i> and do not change <i>hsmStatus</i>, " +
+                "so the badge may read Disarmed even when smoke/water rules are active — this is a Hubitat platform limitation. " +
                 "Configuration sections (Hub #1, Hub #2, Hub #3, Sort &amp; Display Options, and these Notes) " +
                 "are collapsed below and stay out of the way after initial setup." +
 
@@ -478,9 +486,10 @@ def mainPage() {
                 "<li><b>ON Devices</b> — monitored devices currently reporting switch state <b>on</b>.</li>" +
                 "<li><b>OFF Devices</b> — monitored devices currently reporting switch state <b>off</b>.</li>" +
                 "<li><b>Unknown State</b> — monitored devices reporting neither on nor off (can be hidden in Sort &amp; Display Options).</li>" +
-                "<li><b>Lock State</b> — selected lock devices showing their current lock state. " +
+                "<li><b>Lock State</b> — selected lock devices showing their current lock state and battery level. " +
                 "Hub #1 uses a capability picker; Hubs #2 and #3 use the lock device selector populated by Load / Reload. " +
-                "Locked is shown in green, unlocked in red.</li>" +
+                "Locked is shown in green, unlocked in red. Battery % uses the same colour coding as the Health table " +
+                "(green ≥ 40%, orange 20–39%, red &lt; 20%; shown as <i>n/a</i> if the device has no battery attribute).</li>" +
                 "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
                 "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, HE Status, " +
                 "Issue, HE Status, Health Status, Last Activity, Battery %, Last Battery.</li>" +
@@ -721,7 +730,18 @@ def updated() {
 
 void initialize() {
     unschedule()
+    subscribe(location, "hsmAlert", hsmAlertHandler)
     log.info "Device State Monitor Multi-Hub initialized"
+}
+
+def hsmAlertHandler(evt) {
+    if (evt.value == "cancel") {
+        state.remove("hsmActiveAlert")
+        if (enableLogging) log.debug "HSM alert cancelled — cleared active alert state"
+    } else {
+        state.hsmActiveAlert = evt.value
+        if (enableLogging) log.debug "HSM alert received: ${evt.value}"
+    }
 }
 
 def appButtonHandler(btn) {
@@ -945,7 +965,8 @@ private Map collectAllDeviceStates() {
     (devsLock ?: []).findAll(filterLock).each { dev ->
         lockPool << [displayName: dev.displayName, room: resolveLocalRoom(dev, roomMap),
                      hub: hub1LabelVal, linkUrl: "/device/edit/${dev.id}",
-                     lockVal: dev.currentValue("lock")?.toString()?.toLowerCase() ?: "unknown"]
+                     lockVal: dev.currentValue("lock")?.toString()?.toLowerCase() ?: "unknown",
+                     battery: dev.currentValue("battery")?.toString() ?: "n/a"]
     }
     // Health pool – Hub #1
     // Primary source: hub1HealthDevs (capability.* picker) — direct device objects.
@@ -1038,7 +1059,7 @@ private Map collectAllDeviceStates() {
             if (lkWarn && !warnings.contains(lkWarn)) warnings << lkWarn
             lockPool.addAll(lkEntries.collect { e ->
                 [displayName: e.displayName, room: e.room, hub: hubLabel,
-                 linkUrl: e.linkUrl, lockVal: e.lockVal]
+                 linkUrl: e.linkUrl, lockVal: e.lockVal, battery: e.battery ?: "n/a"]
             })
         }
 
@@ -1227,11 +1248,19 @@ private List fetchRemoteLockStates(String ip, String appId, String token,
                     }
                 }
 
+                def lockBatteryVal = "n/a"
+                if (attrsField instanceof List) {
+                    def ba = attrsField.find { a -> a?.name?.toString() == "battery" }
+                    lockBatteryVal = ba?.currentValue?.toString() ?: "n/a"
+                } else if (attrsField instanceof Map) {
+                    lockBatteryVal = attrsField["battery"]?.toString() ?: "n/a"
+                }
                 results << [devId      : devId,
                             displayName: (dev.label ?: dev.name ?: "Unknown").toString(),
                             room       : (dev.room ?: "—").toString(),
                             linkUrl    : "http://${ip}/device/edit/${devId}",
-                            lockVal    : lockVal ?: "unknown"]
+                            lockVal    : lockVal ?: "unknown",
+                            battery    : lockBatteryVal]
             }
         }
     } catch (java.net.SocketTimeoutException e) {
@@ -1500,6 +1529,69 @@ private String buildHealthIssueLabel(String rawStatus, String rawHealthSt,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// HUBITAT SAFETY MONITOR (HSM) STATUS BADGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+private String buildHsmStatusBadge() {
+    def hsmState = location.hsmStatus?.toString()
+    if (!hsmState || hsmState == "null") {
+        return "<p style='margin:4px 0;'><b>HSM:</b> <span style='color:#888;'>Not available</span></p>"
+    }
+
+    // hsmStatus values per Hubitat official docs (intrusion arm state only).
+    // Note: smoke/water rules arm via hsmRules (armAll), NOT hsmStatus — so
+    // hsmStatus can read "disarmed" even while smoke/water monitoring is active.
+    def displayMap = [
+        "armedAway"   : [label: "Armed Away",         color: "#cc0000", icon: "&#x1F534;"],
+        "armingAway"  : [label: "Arming Away\u2026",  color: "#cc6600", icon: "&#x23F3;"],
+        "armedHome"   : [label: "Armed Home",          color: "#cc6600", icon: "&#x1F7E0;"],
+        "armingHome"  : [label: "Arming Home\u2026",   color: "#cc6600", icon: "&#x23F3;"],
+        "armedNight"  : [label: "Armed Night",         color: "#8800cc", icon: "&#x1F7E3;"],
+        "armingNight" : [label: "Arming Night\u2026",  color: "#8800cc", icon: "&#x23F3;"],
+        "disarmed"    : [label: "Disarmed",            color: "#1a7a1a", icon: "&#x1F7E2;"],
+        "allDisarmed" : [label: "All Disarmed",        color: "#1a7a1a", icon: "&#x1F7E2;"],
+    ]
+    def info  = displayMap[hsmState]
+    def label = info?.label ?: hsmState
+    def color = info?.color ?: "#555555"
+    def icon  = info?.icon  ?: "&#x1F512;"
+    def html = "<p style='margin:6px 0 4px 0;font-size:1.05em;'>" +
+               "<b>HSM Status:</b>&nbsp;" +
+               "<span style='color:${color};font-weight:bold;'>${icon} ${htmlEscape(label)}</span>" +
+               "</p>"
+
+    // Active alert — set by hsmAlertHandler when hsmAlert fires, cleared on cancel.
+    def activeAlert = state.hsmActiveAlert?.toString()
+    def alertDisplayMap = [
+        "intrusion"      : [label: "INTRUSION (Away)",  color: "#cc0000"],
+        "intrusion-home" : [label: "INTRUSION (Home)",  color: "#cc0000"],
+        "intrusion-night": [label: "INTRUSION (Night)", color: "#cc0000"],
+        "smoke"          : [label: "SMOKE",             color: "#cc0000"],
+        "water"          : [label: "WATER LEAK",        color: "#0055cc"],
+        "rule"           : [label: "CUSTOM RULE",       color: "#cc6600"],
+    ]
+    if (activeAlert) {
+        def aInfo  = alertDisplayMap[activeAlert]
+        def aLabel = aInfo?.label ?: activeAlert
+        def aColor = aInfo?.color ?: "#cc0000"
+        html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
+                "<b>HSM Alert:</b>&nbsp;" +
+                "<span style='color:${aColor};font-weight:bold;animation:dsm-hsm-blink 0.8s step-start infinite;'>" +
+                "&#x1F6A8; ${htmlEscape(aLabel)}" +
+                "</span>" +
+                "&nbsp;<small style='color:#888;font-weight:normal;'>(clears automatically when HSM alert is cancelled)</small>" +
+                "</p>" +
+                "<style>@keyframes dsm-hsm-blink{50%{opacity:0}}</style>"
+    } else {
+        html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
+                "<b>HSM Alert:</b>&nbsp;" +
+                "<span style='color:#1a7a1a;font-weight:bold;'>No current alert</span>" +
+                "</p>"
+    }
+    return html
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // REPORT TABLE GENERATION
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1518,6 +1610,11 @@ private Map generateReportTables() {
 
     def html = ""
     if (warnings) warnings.each { w -> html += "<p style='color:red;font-weight:bold;'>⚠ ${w}</p>" }
+
+    // ── Hubitat Safety Monitor (HSM) status ──────────────────────────────────
+    if (settings["showHsmStatus"] != false) {
+        html += buildHsmStatusBadge()
+    }
 
     // Devices selected for BOTH the ON-monitor list and the OFF-monitor list
     def onPoolLinks  = onPool.collect  { it.linkUrl } as Set
@@ -1639,6 +1736,7 @@ private String buildLockTable(List devices, String title, String tableId, String
         case "room":    sortColIdx = 1; break
         case "hub":     sortColIdx = 2; break
         case "lockVal": sortColIdx = 3; break
+        case "battery": sortColIdx = 4; break
         default:        sortColIdx = 0; break
     }
     def sortClass = (sortOrder == "desc") ? "sort-desc" : "sort-asc"
@@ -1648,6 +1746,8 @@ private String buildLockTable(List devices, String title, String tableId, String
             case "room":    return it.room?.toLowerCase()        ?: ""
             case "hub":     return it.hub?.toLowerCase()         ?: ""
             case "lockVal": return it.lockVal?.toLowerCase()     ?: ""
+            case "battery":
+                try { return (it.battery?.toString() == "n/a" ? -1 : it.battery?.toString()?.toInteger() ?: -1) } catch (ignored) { return -1 }
             default:        return it.displayName?.toLowerCase() ?: ""
         }
     }
@@ -1660,12 +1760,13 @@ private String buildLockTable(List devices, String title, String tableId, String
         html += "<div class='dsm-scroll-wrap'>"
         html += "<table id='${tableId}' class='on-table' cellpadding='0' cellspacing='0' " +
                 "style='--hdr-bg:${headerColor};table-layout:fixed;width:100%;min-width:300px;'>"
-        html += "<colgroup><col><col class='dsm-col-room col-room'><col class='col-hub'><col style='width:110px'></colgroup>"
+        html += "<colgroup><col><col class='dsm-col-room col-room'><col class='col-hub'><col style='width:110px'><col style='width:90px'></colgroup>"
         html += "<thead><tr>"
         html += "<th onclick='sortOnTable(\"${tableId}\",0)' class='${sortColIdx == 0 ? sortClass : ""}'>Lock Name</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",1)' class='dsm-col-room ${sortColIdx == 1 ? sortClass : ""}'>Room</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",2)' class='dsm-col-hub ${sortColIdx == 2 ? sortClass : ""}'>Hub</th>"
         html += "<th onclick='sortOnTable(\"${tableId}\",3)' class='${sortColIdx == 3 ? sortClass : ""}'>State</th>"
+        html += "<th onclick='sortOnTable(\"${tableId}\",4)' class='${sortColIdx == 4 ? sortClass : ""}'>Battery %</th>"
         html += "</tr></thead><tbody>"
 
         devices.each { it ->
@@ -1673,11 +1774,20 @@ private String buildLockTable(List devices, String title, String tableId, String
             def lockColor = (lv == "locked")   ? "color:green;font-weight:bold;" :
                             (lv == "unlocked") ? "color:red;font-weight:bold;"   :
                                                  "color:#888;"
+            def battStr = it.battery?.toString() ?: "n/a"
+            def battColor = ""
+            if (battStr != "n/a") {
+                try {
+                    def battInt = battStr.toInteger()
+                    battColor = battInt < 20 ? "color:red;" : battInt < 40 ? "color:darkorange;" : "color:green;"
+                } catch (ignored) {}
+            }
             html += "<tr>"
             html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
             html += "<td class='dsm-col-room'>${it.room}</td>"
             html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
             html += "<td class='state-col' style='${lockColor}'>${lv}</td>"
+            html += "<td style='text-align:center;${battColor}'>${battStr}</td>"
             html += "</tr>"
         }
         html += "</tbody></table></div>"
