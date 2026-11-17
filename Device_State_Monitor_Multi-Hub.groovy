@@ -42,6 +42,12 @@ FEATURES:
       stays listed until the next PB scan and can be clicked back to FALSE.
     * Device names link to their hub's Devices page; PB rule names link to the
       corresponding rule configuration page.
+    * HSM status/alert badges for Hub #1 (and optionally Hubs #2/#3). An
+      active alert can be cancelled from the page (1.79): a "Cancel HSM
+      Alerts" button (with a confirmation step) sends HSM's documented
+      hsmSetArm "cancelAlerts" command on Hub #1, or Maker API's
+      /hsm/cancelAlerts on Hubs #2/#3. Cancelling stops in-progress alerts
+      but does not disarm HSM, so a still-true condition can re-alert.
     * Report tables and Refresh button appear at the TOP of the page;
       all configuration sections are collapsed below.
     * Refresh Table button re-queries all hubs on demand.
@@ -63,6 +69,11 @@ import groovy.transform.Field
 @Field static final int    PB_STATUS_REQUEST_TIMEOUT_SECS    = 30
 @Field static final int    PB_STATUS_WATCHDOG_INTERVAL_SECS   = 5    // sequential per-request watchdog check interval
 @Field static final int    PB_STATUS_READ_MAX_ATTEMPTS        = 3
+
+// HSM cancel-alerts (1.79)
+@Field static final int    HSM_CANCEL_CONFIRM_SECS  = 60    // a "Cancel HSM Alerts" click must be confirmed within this window
+@Field static final int    HSM_CANCEL_GRACE_SECS    = 20    // after a cancel, an ALERT still seen on the hub's pages is treated as "pending", not re-latched
+@Field static final int    HSM_CANCEL_TRACK_SECS    = 600   // how long a sent cancel is tracked for the result note under the badge
 
 // Transient PB scan state. Like Private Boolean Manager, this avoids writing
 // hundreds of intermediate rows to Hubitat's state database during a scan.
@@ -86,7 +97,7 @@ import groovy.transform.Field
 @Field static String    pbToggleRuleId           = null   // serializes PB click actions against scans / other clicks
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.78",
+    name:         "Device State Monitor Multi-Hub 1.79",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports device states, health/activity, and FALSE Private Booleans across up to three hubs",
@@ -161,14 +172,12 @@ def mainPage() {
             if (anyPbFalseHubShown()) {
                 input "btnScanPbFalseTop", "button", title: "Scan PB FALSE Rules", width: 6
             }
-            // Generate the report BEFORE deciding whether to show the Clear
-            // button: report generation runs the HSM verification poll, which
-            // can latch a newly-detected alert or auto-clear a stale one.
-            // Evaluating the button first left it one refresh behind (1.58).
+            // Generate the report BEFORE deciding which HSM buttons to show:
+            // report generation runs the HSM verification poll, which can
+            // latch a newly-detected alert or auto-clear a stale one.
+            // Evaluating the buttons first left them one refresh behind (1.58).
             def reportHtml = handler()
-            if (state.hsmActiveAlert) {
-                input "btnClearHsmAlert", "button", title: "Clear HSM Alert Display"
-            }
+            renderHsmAlertButtons()
             paragraph reportHtml
         }
 
@@ -691,7 +700,12 @@ def mainPage() {
                 "Active HSM alerts (intrusion, smoke, water, custom rules) are shown separately as a blinking red line — " +
                 "the app subscribes to <i>hsmAlert</i> events and stores the active alert in app state, clearing it automatically when HSM cancels the alert " +
                 "(both the <i>cancel</i> and <i>cancelRuleAlerts</i> cancellation values are honored — custom-rule alerts use the latter). " +
-                "If a cancel event is ever missed (e.g. hub reboot mid-alert), a <b>Clear HSM Alert Display</b> button appears next to Refresh Table. " +
+                "While an alert is active, a <b>Cancel HSM Alerts</b> button appears next to Refresh Table (one per alerting hub). " +
+                "After a confirmation click it tells HSM itself to cancel its in-progress alerts (sirens included) — Hub #1 via HSM's <i>cancelAlerts</i> command, " +
+                "Hubs #2/#3 via that hub's Maker API (<i>/hsm/cancelAlerts</i>; needs the HSM toggle enabled in that Maker API app). " +
+                "Cancelling does not disarm HSM: if the alert condition is still true (a door still unlocked, a sensor still wet), HSM may alert again, and a note under the badge says so. " +
+                "The display-only <b>Clear HSM Alert Display</b> button now appears only when the alert state could not be verified against the hub " +
+                "(verification off or unavailable) — e.g. if a cancel event was missed — because a verified alert would simply be re-detected. " +
                 "In addition, when <b>Verify the HSM alert state</b> is enabled (Sort &amp; Display Options, on by default), every refresh " +
                 "cross-checks the badge against the hub itself: with the HSM app ID configured, the live alert text is read straight from the HSM app page " +
                 "(e.g. <i>Custom Rule Alert: Door Locks unlocked</i>); without it, the hub's Apps list is scanned for the red ALERT! suffix HSM adds to its label. " +
@@ -1351,6 +1365,10 @@ void initialize() {
         state.pbFalseScanStatus = "<i>PB scan was cancelled because app settings/code were saved. Click Scan PB FALSE Rules to scan again.</i>"
     }
 
+    // A half-finished "Cancel HSM Alerts" confirmation must never survive a
+    // settings save / code update.
+    state.remove("hsmCancelPending")
+
     subscribe(location, "hsmAlert", hsmAlertHandler)
     log.info "Device State Monitor Multi-Hub initialized"
 }
@@ -1389,6 +1407,29 @@ def appButtonHandler(btn) {
     if (btn == "btnClearHsmAlert") {
         clearHsmActiveAlert()
         log.info "HSM alert display cleared manually"
+        return
+    }
+    // Cancel HSM Alerts (1.79) — two-step: the first click only arms a
+    // confirmation; nothing is sent to HSM until "Yes — Cancel…" is clicked.
+    if (btn in ["btnCancelHsmHub1", "btnCancelHsmHub2", "btnCancelHsmHub3"]) {
+        int hubNum = Integer.parseInt(btn.substring(btn.length() - 1))
+        state.hsmCancelPending = [hub: hubNum, at: now()]
+        if (enableLogging) log.debug "HSM cancel requested for ${hsmHubLabel(hubNum)} — awaiting confirmation"
+        return
+    }
+    if (btn == "btnConfirmCancelHsm") {
+        Map pending = activeHsmCancelPending()
+        state.remove("hsmCancelPending")
+        if (pending) {
+            cancelHsmAlerts((pending.hub ?: 1) as int)
+        } else {
+            log.info "HSM cancel confirmation expired (>${HSM_CANCEL_CONFIRM_SECS}s) — nothing was sent"
+        }
+        return
+    }
+    if (btn == "btnAbortCancelHsm") {
+        state.remove("hsmCancelPending")
+        log.info "HSM cancel not confirmed — alerts left as they are"
         return
     }
     if (btn in ["btnScanPbFalseTop", "btnScanPbFalseBottom"]) {
@@ -3177,9 +3218,20 @@ private void reconcileHsmAlertWithHub() {
             clearHsmActiveAlert()
         }
     } else if (poll.status == "alerting") {
+        if (hsmCancelInGrace(1)) {
+            // A cancelAlerts was sent moments ago and HSM may not have updated
+            // its pages yet. Do not re-latch during the grace window; the note
+            // under the badge asks the user to refresh to confirm (1.79).
+            if (enableLogging) log.debug "HSM verify: alert still shown within ${HSM_CANCEL_GRACE_SECS}s of a cancel — treating as pending"
+            return
+        }
         if (!state.hsmActiveAlert) {
-            // Missed hsmAlert event — latch a detected alert now.
-            log.warn "HSM verify: hub shows an active alert but no hsmAlert event was captured — displaying it now"
+            // Missed hsmAlert event (or HSM still alerting after a cancel) — latch a detected alert now.
+            if (hsmCancelSentMs(1) != null) {
+                log.warn "HSM verify: hub still shows an active alert after Cancel HSM Alerts was sent — the alert condition is probably still true; displaying it again"
+            } else {
+                log.warn "HSM verify: hub shows an active alert but no hsmAlert event was captured — displaying it now"
+            }
             state.hsmActiveAlert     = "detected"
             state.hsmActiveAlertRule = poll.detail ?: ""
             state.hsmActiveAlertAt   = new Date().format("yyyy-MM-dd hh:mm a", location.timeZone)
@@ -3189,6 +3241,218 @@ private void reconcileHsmAlertWithHub() {
         }
     }
     // status null → could not verify; leave event-latched state untouched.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HSM CANCEL ALERTS (added in 1.79)
+// The "Clear HSM Alert Display" button only resets this app's copy of the
+// alert, and with verification on a still-active alert is re-detected on the
+// same render. These helpers let the page ask HSM itself to cancel:
+//   • Hub #1 — documented HSM interface: sendLocationEvent hsmSetArm
+//     "cancelAlerts" ("stop all in progress alerts"; lower-case 'c').
+//   • Hubs #2/#3 — Maker API GET /apps/api/<id>/hsm/cancelAlerts (requires
+//     the HSM toggle enabled in that hub's Maker API app).
+// Cancelling does NOT disarm HSM; if the alert condition is still true HSM
+// can re-alert immediately, and the result note under the badge says so.
+// Every cancel needs a confirmation click (expires after
+// HSM_CANCEL_CONFIRM_SECS) because it also silences sirens.
+// ─────────────────────────────────────────────────────────────────────────────
+
+private String hsmHubLabel(int hubNum) {
+    return (hubNum == 1)
+        ? (settings["hub1Label"] ?: (location.name ?: "Hub 1")).toString()
+        : (settings["hub${hubNum}Label"] ?: "Hub ${hubNum}").toString()
+}
+
+// True when a remote hub has everything needed to send /hsm/cancelAlerts.
+private boolean remoteHsmCancelConfigured(int hubNum) {
+    if (!(hubNum in [2, 3])) return false
+    if (!settings["hub${hubNum}Enabled"]) return false
+    if (!safeString(settings["hub${hubNum}Ip"]).trim())    return false
+    if (!safeString(settings["hub${hubNum}AppId"]).trim()) return false
+    if (!safeString(settings["hub${hubNum}Token"]).trim()) return false
+    return true
+}
+
+// True when this refresh's Hub #1 alert line was confirmed against the hub's
+// own pages (so a display-only "Clear" would just be re-detected).
+private boolean hub1HsmAlertVerified() {
+    return settings["showHsmStatus"] != false &&
+           settings["hsmVerifyAlert"] != false &&
+           (state.hsmAlertPollResult?.toString() in ["alerting", "clear"])
+}
+
+// The pending (not yet confirmed) cancel request, or null. Expired requests
+// are discarded so a stale confirmation can never fire later.
+private Map activeHsmCancelPending() {
+    def p = state.hsmCancelPending
+    if (!(p instanceof Map)) return null
+    Long at = 0L
+    try { at = (p.at ?: 0L) as Long } catch (ignored) { at = 0L }
+    if (!at || (now() - at) > HSM_CANCEL_CONFIRM_SECS * 1000L) {
+        state.remove("hsmCancelPending")
+        return null
+    }
+    return p as Map
+}
+
+private Long hsmCancelSentMs(int hubNum) {
+    def v = state["hsmCancelSentAt${hubNum}".toString()]
+    if (v == null) return null
+    try { return v as Long } catch (ignored) { return null }
+}
+
+private boolean hsmCancelInGrace(int hubNum) {
+    Long sent = hsmCancelSentMs(hubNum)
+    return sent != null && (now() - sent) < HSM_CANCEL_GRACE_SECS * 1000L
+}
+
+private void clearHsmCancelTracking(int hubNum) {
+    state.remove("hsmCancelSentAt${hubNum}".toString())
+    state.remove("hsmCancelSentStr${hubNum}".toString())
+}
+
+private void cancelHsmAlerts(int hubNum) {
+    String label = hsmHubLabel(hubNum)
+    state.remove("hsmCancelError${hubNum}".toString())
+    try {
+        if (hubNum == 1) {
+            sendLocationEvent(name: "hsmSetArm", value: "cancelAlerts")
+            // HSM answers with its own hsmAlert "cancel" event, which
+            // hsmAlertHandler also handles. Clearing here as well keeps the
+            // render that immediately follows this click consistent.
+            clearHsmActiveAlert()
+        } else {
+            if (!remoteHsmCancelConfigured(hubNum)) {
+                throw new Exception("hub is not enabled or its Maker API IP / app ID / token is missing")
+            }
+            sendRemoteHsmCancel(hubNum)   // throws on any failure
+        }
+        state["hsmCancelSentAt${hubNum}".toString()]  = now()
+        state["hsmCancelSentStr${hubNum}".toString()] = new Date().format("hh:mm:ss a", location.timeZone)
+        log.info "HSM: cancelAlerts sent to ${label} (requested from the ${getAppDisplayName()} page)"
+    } catch (Exception e) {
+        clearHsmCancelTracking(hubNum)
+        state["hsmCancelError${hubNum}".toString()] = (e.message ?: "unknown error").toString()
+        log.warn "HSM: cancelAlerts request to ${label} failed — ${e.message}"
+    }
+}
+
+// Maker API relay for Hubs #2/#3. Parameters go in the query: map rather than
+// an embedded ?access_token= (see fetchJson for the platform 2.5.1 reason).
+private void sendRemoteHsmCancel(int hubNum) {
+    String ip    = safeString(settings["hub${hubNum}Ip"]).trim()
+    String appId = safeString(settings["hub${hubNum}AppId"]).trim()
+    String token = safeString(settings["hub${hubNum}Token"]).trim()
+    String uri   = "http://${ip}/apps/api/${appId}/hsm/cancelAlerts".toString()
+
+    httpGet([uri: uri, query: [access_token: token], contentType: "text/plain",
+             headers: ["Accept": "*/*"], timeout: 10]) { resp ->
+        if (resp.status != 200) throw new Exception("Maker API returned HTTP ${resp.status}")
+        def d = resp.data
+        String body
+        if (d == null) {
+            body = ""
+        } else if (d instanceof String) {
+            body = d
+        } else if (d instanceof Map || d instanceof List) {
+            body = groovy.json.JsonOutput.toJson(d)
+        } else {
+            try { body = d.text } catch (ignore) { body = d.toString() }
+        }
+        if (body && looksLikeLoginPage(body)) {
+            throw new Exception("hub returned a login page instead of a Maker API response — check the Maker API app ID and token")
+        }
+        if (enableLogging) log.debug "HSM cancel (${hsmHubLabel(hubNum)}): Maker API replied ${jsonErrSnippet(body ?: '(empty)')}"
+    }
+}
+
+// Result note shown under a hub's HSM badge after a cancel was sent (or
+// failed). pollStatus is that refresh's verification result for the hub:
+// "alerting", "clear", or null/"unavailable" when it could not be verified.
+private String hsmCancelNote(int hubNum, String pollStatus) {
+    String html = ""
+    String err = state["hsmCancelError${hubNum}".toString()]?.toString()
+    if (err) {
+        String hint = (hubNum == 1) ? "" :
+            " Check that ${htmlEscape(hsmHubLabel(hubNum))} is reachable and that the <b>HSM</b> toggle is enabled in its Maker API app."
+        html += "<p style='margin:0 0 8px 0;'><small style='color:#cc0000;'>" +
+                "<b>⚠ Cancel HSM Alerts failed: ${htmlEscape(err)}.</b>${hint}</small></p>"
+        state.remove("hsmCancelError${hubNum}".toString())
+    }
+
+    Long sent = hsmCancelSentMs(hubNum)
+    if (sent == null) return html
+    long ageMs = (now() - sent) as long
+    if (ageMs > HSM_CANCEL_TRACK_SECS * 1000L) {
+        clearHsmCancelTracking(hubNum)
+        return html
+    }
+
+    String sentStr = htmlEscape(state["hsmCancelSentStr${hubNum}".toString()] ?: "")
+    String color
+    String msg
+    if (pollStatus == "clear") {
+        color = "#1a7a1a"
+        msg   = "✓ Cancel sent at ${sentStr} — HSM now reports no active alert."
+        clearHsmCancelTracking(hubNum)
+    } else if (pollStatus == "alerting") {
+        if (ageMs < HSM_CANCEL_GRACE_SECS * 1000L) {
+            color = "#b36b00"
+            msg   = "Cancel sent at ${sentStr}. HSM had not finished processing it when this page was built — " +
+                    "click <b>Refresh Table</b> in a few seconds to confirm."
+        } else {
+            color = "#cc0000"
+            msg   = "Cancel sent at ${sentStr}, but HSM is reporting an active alert again. The alert condition is " +
+                    "probably still true (for example a door still unlocked or a sensor still wet), so HSM re-alerted. " +
+                    "Fix the condition, or disarm the affected monitoring in HSM. If the condition is definitely " +
+                    "cleared, cancel the alert directly in the HSM app on that hub."
+        }
+    } else {
+        color = "#888"
+        msg   = "Cancel sent to HSM at ${sentStr}. The result could not be confirmed here (alert verification is off " +
+                "or unavailable) — check HSM directly."
+        clearHsmCancelTracking(hubNum)
+    }
+    html += "<p style='margin:0 0 8px 0;'><small style='color:${color};'>${msg}</small></p>"
+    return html
+}
+
+// Buttons rendered next to Refresh Table, AFTER the report has been built so
+// they reflect this refresh's verification result.
+private void renderHsmAlertButtons() {
+    Map pending = activeHsmCancelPending()
+    if (pending) {
+        int hn     = (pending.hub ?: 1) as int
+        String lbl = hsmHubLabel(hn)
+        paragraph("<div style='border:2px solid #cc0000;background:#fff0f0;border-radius:6px;padding:8px 10px;margin:6px 0;'>" +
+                  "<b>⚠ Cancel the active HSM alert(s) on ${htmlEscape(lbl)}?</b><br>" +
+                  "<small>This tells HSM to stop all in-progress alerts on that hub, including sirens and light alerts. " +
+                  "It does <b>not</b> disarm HSM — if the alert condition is still true, HSM may alert again. " +
+                  "This confirmation expires after ${HSM_CANCEL_CONFIRM_SECS} seconds.</small></div>")
+        input "btnConfirmCancelHsm", "button", title: "Yes — Cancel HSM Alerts on ${lbl}", width: 6
+        input "btnAbortCancelHsm",   "button", title: "No — Leave Alerts Active", width: 6
+        return
+    }
+
+    if (settings["showHsmStatus"] != false) {
+        if (state.hsmActiveAlert) {
+            input "btnCancelHsmHub1", "button", title: "Cancel HSM Alerts on ${hsmHubLabel(1)}"
+        }
+        [2, 3].each { int rn ->
+            if (state["hsmRemoteAlertingHub${rn}".toString()] && remoteHsmCancelConfigured(rn)) {
+                input "btnCancelHsmHub${rn}", "button", title: "Cancel HSM Alerts on ${hsmHubLabel(rn)}"
+            }
+        }
+    }
+
+    // Display-only reset. Useful only when the alert state could NOT be
+    // verified against the hub (verification off/unavailable, e.g. a missed
+    // cancel event): a verified alert is re-detected on the very same render,
+    // which made this button look broken before 1.79.
+    if (state.hsmActiveAlert && !hub1HsmAlertVerified()) {
+        input "btnClearHsmAlert", "button", title: "Clear HSM Alert Display"
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3275,15 +3539,25 @@ private String buildHsmStatusBadge() {
                 "<span style='color:${aColor};font-weight:bold;animation:dsm-hsm-blink 0.8s step-start infinite;'>" +
                 "&#x1F6A8; ${htmlEscape(aLabel)}" +
                 "</span>" +
-                "&nbsp;<small style='color:#888;font-weight:normal;'>(${htmlEscape(sinceStr ? sinceStr.trim() + ' — ' : '')}clears when HSM cancels the alert, or use the Clear HSM Alert Display button above)</small>" +
+                "&nbsp;<small style='color:#888;font-weight:normal;'>(${htmlEscape(sinceStr ? sinceStr.trim() + ' — ' : '')}clears when HSM cancels the alert; use the Cancel HSM Alerts button above to cancel it from here)</small>" +
                 "</p>" +
                 "<style>@keyframes dsm-hsm-blink{50%{opacity:0}}</style>"
+    } else if (settings["hsmVerifyAlert"] != false && hsmCancelInGrace(1) &&
+               state.hsmAlertPollResult?.toString() == "alerting") {
+        // Cancel just sent; the hub's pages still showed ALERT a moment ago.
+        html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
+                "<b>HSM Alert${hubTag}:</b>&nbsp;" +
+                "<span style='color:#b36b00;font-weight:bold;'>&#x23F3; Cancel sent — waiting for HSM to confirm</span>" +
+                "</p>"
     } else {
         html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
                 "<b>HSM Alert${hubTag}:</b>&nbsp;" +
                 "<span style='color:#1a7a1a;font-weight:bold;'>No current alert</span>" +
                 "</p>"
     }
+
+    // Result of a "Cancel HSM Alerts" click, if one is being tracked.
+    html += hsmCancelNote(1, settings["hsmVerifyAlert"] != false ? state.hsmAlertPollResult?.toString() : null)
 
     // Verification footnote — says whether the alert line above was checked
     // against the hub on this refresh, or is running on events alone.
@@ -3342,14 +3616,23 @@ private String buildRemoteHsmStatusBadge(int hubNum) {
 
     // ── Alert (page verification against the remote hub) ────────────────────
     def poll = pollHsmAlertFromHost("http://${ip}", settings["hub${hubNum}HsmAppId"], hubLabel)
-    if (poll.status == "alerting") {
+    boolean cancelPending = (poll.status == "alerting") && hsmCancelInGrace(hubNum)
+    // Read by renderHsmAlertButtons() to decide whether to offer Cancel.
+    state["hsmRemoteAlertingHub${hubNum}".toString()] = (poll.status == "alerting") && !cancelPending
+    if (cancelPending) {
+        html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
+                "<b>HSM Alert${hubTag}:</b>&nbsp;" +
+                "<span style='color:#b36b00;font-weight:bold;'>&#x23F3; Cancel sent — waiting for HSM to confirm</span>" +
+                "</p>"
+    } else if (poll.status == "alerting") {
         def aLabel = "ACTIVE ALERT" + (poll.detail ? " — ${poll.detail}" : "")
+        def cancelHint = remoteHsmCancelConfigured(hubNum) ? "; use the Cancel HSM Alerts button above to cancel it" : ""
         html += "<p style='margin:2px 0 10px 0;font-size:1.05em;'>" +
                 "<b>HSM Alert${hubTag}:</b>&nbsp;" +
                 "<span style='color:#cc0000;font-weight:bold;animation:dsm-hsm-blink 0.8s step-start infinite;'>" +
                 "&#x1F6A8; ${htmlEscape(aLabel)}" +
                 "</span>" +
-                "&nbsp;<small style='color:#888;font-weight:normal;'>(poll-only — updates on each refresh)</small>" +
+                "&nbsp;<small style='color:#888;font-weight:normal;'>(poll-only — updates on each refresh${cancelHint})</small>" +
                 "</p>" +
                 "<style>@keyframes dsm-hsm-blink{50%{opacity:0}}</style>"
     } else if (poll.status == "clear") {
@@ -3364,6 +3647,9 @@ private String buildRemoteHsmStatusBadge(int hubNum) {
                 "&nbsp;<small style='color:#b36b00;'>(could not read ${htmlEscape(hubLabel)}'s Apps / HSM pages — Hub Login Security may be enabled there)</small>" +
                 "</p>"
     }
+
+    // Result of a "Cancel HSM Alerts" click for this hub, if one is tracked.
+    html += hsmCancelNote(hubNum, poll.status?.toString())
     return html
 }
 
@@ -3390,6 +3676,11 @@ private Map generateReportTables() {
     if (warnings) warnings.each { w -> html += "<p style='color:red;font-weight:bold;'>⚠ ${w}</p>" }
 
     // ── Hubitat Safety Monitor (HSM) status ──────────────────────────────────
+    // Remote "alerting" flags are rebuilt on every render by
+    // buildRemoteHsmStatusBadge(); reset them first so a hub whose badge is no
+    // longer shown can never keep a stale Cancel button.
+    state.hsmRemoteAlertingHub2 = false
+    state.hsmRemoteAlertingHub3 = false
     if (settings["showHsmStatus"] != false) {
         // Reconcile the latched alert with the hub's own pages first, so the
         // badge below reflects reality even if an hsmAlert event was missed.
