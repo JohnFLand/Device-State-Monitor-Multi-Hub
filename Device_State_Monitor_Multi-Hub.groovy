@@ -744,7 +744,7 @@ def mainPage() {
                 "<i>acceleration</i>) show their acceleration state instead: <b>active</b> (tilted) is treated like open (red, " +
                 "and listed in open-only mode), <b>inactive</b> like closed (green); hover the state for a note.</li>" +
                 "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
-                "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, HE Status, " +
+                "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, " +
                 "Issue, HE Status, Health Status, Last Activity, Battery %, Last Battery.</li>" +
                 "<li><b>Rules with Private Boolean FALSE</b> — Rule Machine and Button Controller child rules whose current " +
                 "Private Boolean is FALSE, plus any UNKNOWN exceptions that remain unreadable after retries. The scan covers only hubs selected by the three per-hub PB controls; Hubs #2/#3 must also be enabled normally. Unselected hubs are not queried. Columns are Rule, App Type, Hub, PB State, and Last Run. " +
