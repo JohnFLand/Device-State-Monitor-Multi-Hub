@@ -1,517 +1,559 @@
-# Device State Monitor Multi-Hub — User Guide
+# Sonoff SNZB-02 Series Temperature and Humidity Sensor — Hubitat Driver
 
-**App version:** 1.79  
-**Applies to:** Hubitat Elevation, same-LAN multi-hub deployments
+**Driver name:** Sonoff SNZB-02 Series Temperature and Humidity Sensor  
+**Driver version:** 1.4.2  
+**Devices:** Sonoff SNZB-02P, SNZB-02D, SNZB-02LD, SNZB-02DR2 and SNZB-02M Zigbee sensors  
+**Manufacturer strings:** `SONOFF` or `eWeLink`
 
 ---
 
 ## Overview
 
-Device State Monitor Multi-Hub reports device states across up to three Hubitat hubs from a single app page. It provides seven live tables:
+One Hubitat driver for five Sonoff battery-powered Zigbee sensors. It recognises the model
+from the device and switches on the features that model has:
 
-- **ON Devices** — switch-capable devices currently reporting ON
-- **OFF Devices** — switch-capable devices currently reporting OFF
-- **Unknown State** — switch-capable devices reporting neither ON nor OFF
-- **Lock State** — explicitly selected lock devices showing their current lock state (locked/unlocked) and battery level
-- **Contact Sensors** — explicitly selected contact sensors; by default only sensors currently **open** are listed (*"N open of M monitored"*), with an option to show every selected sensor and its state
-- **Health / Activity Monitor** — any device (switch or otherwise) that is OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, or whose last activity exceeds a configurable time threshold
-- **Rules with Private Boolean FALSE** — Rule Machine and Button Controller rules on the scanned hubs whose Private Boolean is currently FALSE, with clickable PB State cells to set a rule's Private Boolean TRUE (and back) without leaving the page — see [Rules with Private Boolean FALSE Table](#rules-with-private-boolean-false-table)
+| Feature | SNZB-02P / 02D / 02LD | SNZB-02DR2 | SNZB-02M |
+|---|:-:|:-:|:-:|
+| Temperature, humidity, battery | ✓ | ✓ | ✓ |
+| Reporting intervals and thresholds set from Hubitat | ✓ | ✓ | ✓ |
+| Hubitat-side temperature and humidity offsets | ✓ | ✓ | ✓ |
+| Temperature settings in °C or °F; temperature decimal places | ✓ | ✓ | ✓ |
+| Dew point and vapour pressure deficit (VPD) | ✓ | ✓ | ✓ |
+| Min/max with timestamps, daily auto-reset | ✓ | ✓ | ✓ |
+| Rolling 24-hour and 2–365-day averages of temperature and humidity | ✓ | ✓ | ✓ |
+| `healthStatus` and `sensorStatus` | ✓ | ✓ | ✓ |
+| Comfort thresholds and LCD unit written to the device | | ✓ | |
+| Device's own 24-hour min/max (as on its LCD) | | ✓ | |
+| Readings sent from Hubitat shown on its LCD (EXT1 / EXT2) | | ✓ | |
+| Offsets applied in the sensor, so its LCD matches Hubitat (optional) | | ✓ | |
+| Comfort thresholds and calibration read from the device | | | ✓ |
+| Barometric pressure (0.1 hPa, selectable unit) | | | ✓ |
 
-Above the tables, a **Hubitat Safety Monitor (HSM)** status badge shows the current intrusion arm state and any active alert. The alert display is verified against the hub itself on every Refresh (not just driven by events), an active alert can be **cancelled in HSM directly from the page** (new in 1.79), and HSM on Hubs #2 and #3 can optionally be shown as well — see [Hubitat Safety Monitor (HSM) Status](#hubitat-safety-monitor-hsm-status).
+**SNZB-02LD.** The SNZB-02LD is Sonoff's probe thermometer with an LCD: it measures temperature
+through its 1.5 m probe (−40 to 115 °C, within the driver's sanity limits) and has no humidity
+sensor. It uses the same features as the SNZB-02P / 02D; `humidity`, `dewPoint`, `vpd` and the
+humidity min/max and averages stay empty on it. You can turn off **Calculate dew point and VPD**
+for it.
 
-Device names are clickable links to their hub's device edit page; rule names in the Private Boolean table link to the rule's configuration page on its hub. When Maker API credentials are configured, the State cell in the ON and OFF tables is clickable to toggle the device without leaving the page.
-
----
-
-## Setting Up Maker API on a Remote Hub
-
-Hubs #2 and #3 are queried via Hubitat's built-in **Maker API** app. Perform these steps on each remote hub before configuring it in Device State Monitor.
-
-### Step 1 — Install Maker API on the remote hub
-
-1. On the remote hub, go to **Apps** → **+ Add Built-In App**.
-2. Find **Maker API** and install it.
-3. Open the Maker API app. Under **Allow Access to Devices**, select every device you want to be reachable from Device State Monitor — this includes devices you want to monitor for ON/OFF state, contact sensors, locks, and any you want in the Health/Activity table. Only devices selected here will be visible to the app.
-   - If you plan to display this hub's **HSM status** in the report (optional, off by default), also enable the **HSM** toggle ("Allow control of HSM") in the same Maker API app — the arm state is read through Maker API's `/hsm` endpoint, and the **Cancel HSM Alerts** button for this hub uses Maker API's `/hsm/cancelAlerts`.
-4. Note the **App ID** shown in the Maker API page heading (e.g. *Maker API — App # 42*). You will need this number.
-5. Copy the **Access Token** shown on the same page.
-6. Note the hub's **local IP address** (visible in Hubitat's **Settings → Hub Details**, or in your router's DHCP table).
-
-### Step 2 — Test connectivity (optional but recommended)
-
-From a browser on the same LAN, visit:
-
-```
-http://<hub-ip>/apps/api/<app-id>/devices?access_token=<token>
-```
-
-You should see a JSON list of your selected devices. If the page loads, the credentials are correct.
-
-### Step 3 — Enter credentials in Device State Monitor
-
-Open the Hub #2 (or #3) section in Device State Monitor, enable the hub, expand **Show / Edit Connection Settings**, and enter the IP address, App ID, and Access Token you noted above. Then choose **⟳ Load / Reload Device List** from the Actions dropdown to fetch the device list.
+This driver replaces three separate drivers — **SNZB-02x** (1.5.0, for the SNZB-02P and
+SNZB-02D), **SNZB-02DR2** (1.13.0) and **SNZB-02M** (2.4.0). Those remain available but are
+frozen apart from serious bug fixes. See **Switching from the separate drivers** below.
 
 ---
 
-## Page Layout
+## Installation
 
-The app page is divided into two zones:
+1. In Hubitat, go to **Drivers Code → New Driver**
+2. Click **Import**, paste this URL and click **Import**, then **Save** (or paste the full
+   driver code instead):  
+   `https://raw.githubusercontent.com/JohnFLand/Sonoff_SNZB-02_Series-Zigbee-driver-for-Hubitat/main/Sonoff_SNZB-02_Series.groovy`  
+   To update later, open the existing driver in **Drivers Code**, click **Import** (the URL is
+   filled in) and **Save**. Always update the existing driver rather than adding a new one,
+   so your devices, settings and rules stay attached to it.
+3. The driver's fingerprints match automatically when a sensor is paired (except the
+   SNZB-02LD, which has no fingerprint yet: select the driver by hand as below). For a sensor that
+   is already paired, open the device and choose
+   **Sonoff SNZB-02 Series Temperature and Humidity Sensor** from the **Type** dropdown, then
+   **Save Device**
+4. Press the sensor's button, then click **Configure**. This detects the model, sends the
+   reporting configuration and reads the current values. The log shows which model was
+   detected, for example `Model SNZB-02DR2: using SNZB-02DR2 features`.
+5. Reopen the device page so the preferences for that model appear, set them, wake the
+   sensor and click **Save Preferences**.
 
-**Top — live report area**
-- **Refresh Table** button — re-queries all hubs immediately and redraws all tables
-- **Scan PB FALSE Rules** button — appears next to Refresh when the Private Boolean FALSE table is enabled for at least one hub; starts a new PB scan on demand
-- **Cancel HSM Alerts on _hub_** button — appears next to Refresh while an HSM alert is active (one button per alerting hub); after a confirmation click it tells HSM to cancel its in-progress alerts (see the HSM section)
-- **Clear HSM Alert Display** button — display-only reset; appears only while an alert is latched *and* the alert state could not be verified against the hub (see the HSM section)
-- ***Last run* timestamp** — directly under the buttons, showing the report time and total scan time with a data-collection / render breakdown. (It sits at the top so it is not mistaken for a PB-scan timestamp; the PB table has its own *Last completed scan* line.)
-- **HSM Status** and **HSM Alert** badges (if HSM is installed), optionally repeated for Hubs #2 and #3
-- The seven report tables (ON, OFF, Unknown, Lock State, Contact Sensors, Health/Activity, Rules with Private Boolean FALSE)
-- A second **Refresh Table** button (and **Scan PB FALSE Rules** button, when enabled) below the tables, so a refresh is one click away after scrolling through a long report
+### Switching from the separate drivers
 
-**Bottom — collapsed configuration sections**
-- Hub #1, Hub #2, Hub #3 settings (each collapsible)
-- Sort & Display Options (sort defaults, Private Boolean table settings, Hide Columns, filtering, display preferences)
-- Notes / User Guide (condensed in-app reference)
+For each device:
 
-Configuration sections are hidden by default once set up, so the report tables are the first thing you see on every visit.
+1. Change **Type** to **Sonoff SNZB-02 Series Temperature and Humidity Sensor** and click
+   **Save Device**.
+2. Press the sensor's button, then click **Save Preferences**. This detects the model, sends
+   your settings to the sensor and tidies up attributes the old drivers used (`rtt`, and on
+   the SNZB-02DR2, `comfortHumiMin` / `comfortHumiMax`).
+3. Check the preferences. The settings have the same names as in the separate drivers, so
+   they normally carry over; the temperature units default to °C, which is what the older
+   drivers used.
+
+**Attribute changes to check in your rules and dashboards:**
+
+| Old driver | Old attribute | Now |
+|---|---|---|
+| SNZB-02DR2 | `comfortHumiMin`, `comfortHumiMax` (text, e.g. `40%`) | `comfortHumidityMin`, `comfortHumidityMax` (numbers) |
+| SNZB-02DR2 | `comfortTempMin`, `comfortTempMax` (text, e.g. `64.4°F`) | Same names, now numbers with a unit |
+| SNZB-02x, SNZB-02DR2 | — | New: `dewPoint` and `vpd` (can be turned off) |
+| SNZB-02M | `humidity`, `Humidity Min`/`Max` to 0.1 % | Whole percent |
+| all | `rtt` and the Ping command | Removed in the separate drivers' latest versions; not present here |
+
+Everything else keeps its name and format. The Hubitat-tracked min/max carries over.
 
 ---
 
-## Mobile Support
+## Model detection
 
-All seven tables are designed to display correctly on both desktop and mobile browsers. Column widths and Room column visibility adjust automatically based on the actual viewport width — no manual setting is required.
+The model comes from the device's model string, recorded when it was paired:
 
-### Responsive Column Widths
+| Model string | Treated as |
+|---|---|
+| `SNZB-02DR2` | SNZB-02DR2 |
+| `SNZB-02M` | SNZB-02M |
+| `SNZB-02P`, `SNZB-02D`, `SNZB-02LD` | SNZB-02P / SNZB-02D / SNZB-02LD |
+| anything else | SNZB-02P / SNZB-02D / SNZB-02LD, with a warning in the log |
 
-The Hub and Room columns switch width automatically at a 767 px breakpoint:
+If the model is not recognised, or you want to try a model's features on another sensor, set
+**Device model** in the preferences. Save, then reopen the page to see that model's
+settings.
 
-| Viewport | Room | Hub | Health Room | Health Hub |
+**The Pressure Measurement capability is declared for every model**, because Hubitat
+capabilities cannot vary by device. Only the SNZB-02M ever reports a pressure value, but
+SNZB-02P, 02D and 02DR2 sensors will appear in apps' pressure-sensor pickers. If that is a
+problem, comment out the `capability 'PressureMeasurement'` line and use the separate
+SNZB-02M driver for any SNZB-02M sensors.
+
+---
+
+## The sensors are sleepy devices
+
+These sensors spend almost all their time asleep, waking briefly to send readings. While
+asleep they do not hear the hub, so anything the hub sends — reporting configuration,
+SNZB-02DR2 settings, Configure, Refresh, Initialize — is lost unless the sensor is awake.
+
+**Press the sensor's button immediately before clicking Save Preferences, Configure,
+Refresh or Initialize.**
+
+With description text logging on, the log confirms each request:
+
+- `Temperature reporting configuration accepted by device` (likewise Humidity, Pressure and Battery)
+- `FC11 attribute write accepted by device` (SNZB-02DR2 settings)
+- A warning such as `FC11 write of attribute 0x0007 rejected (status 0x8D)` if the sensor refuses a change
+
+If none of these lines appear after a Save, the sensor was asleep — wake it and save again.
+
+Sleep affects only what the sensor *hears*. It does not limit how often it *sends*
+readings — see the FAQ.
+
+The SNZB-02DR2 remote-display commands are the exception: no button press is needed. The
+driver re-sends their values automatically when the sensor next wakes — see
+**Remote display (SNZB-02DR2)**.
+
+---
+
+## Supported Capabilities
+
+| Capability | Notes |
+|---|---|
+| `TemperatureMeasurement` | Standard ZCL cluster 0x0402 |
+| `RelativeHumidityMeasurement` | Standard ZCL cluster 0x0405 |
+| `PressureMeasurement` | Standard ZCL cluster 0x0403 — SNZB-02M only (see **Model detection**) |
+| `Battery` | Percentage from cluster 0x0001 attr 0x0021; SNZB-02P / 02D / 02DR2 also read the voltage (attr 0x0020) on Refresh |
+| `Refresh` | Reads current values and the model's device settings (wake the sensor first) |
+| `Configuration` | **Configure** detects the model, sends the reporting configuration and reads current values |
+| `Sensor` | Base capability |
+
+---
+
+## Current States
+
+Temperatures (including dew point, comfort temperatures and the SNZB-02DR2's own min/max) are
+shown in the hub's temperature scale (**Settings → Location**), rounded half-up to the number
+of places set in **Temperature decimal places** (default 1). `temperatureCalibration` also
+follows the hub's scale: to 0.01 in °C and to 0.1 in °F, since the sensor stores it in 0.01 °C
+steps (0.018 °F). As a temperature difference it is converted without the +32 (1.11 °C = 2.0 °F).
+
+### All models
+| Attribute | Description |
+|---|---|
+| `temperature` | Current temperature, with the Hubitat temperature offset applied |
+| `humidity` | Current relative humidity in whole percent, with the Hubitat humidity offset applied (clamped to 0–100 %) |
+| `battery` | Battery level %. A Refresh on the SNZB-02P / 02D / 02DR2 also reads the battery voltage and estimates a percentage from it (2.1–3.0 V) |
+| `dewPoint` | Dew point, calculated from temperature and humidity |
+| `vpd` | Vapour pressure deficit in kPa, calculated from temperature and humidity |
+| `temperatureAvg24h` / `humidityAvg24h` | Time-weighted average over the last 24 hours (humidity to 0.1 %). See **Averages** |
+| `temperatureAvgLongTerm` / `humidityAvgLongTerm` | Time-weighted average over the last N days, N set by **Averaging period (days)**. The value is the average, not the period's length; the length is shown in `averagesInfo` |
+| `averagesInfo` | How much data each average covers, e.g. `24 h average: 24.0 of 24 hours; 7-day average: 2.5 of 7 days (collecting since 2026-11-19 11:30)` |
+| `Temperature Min` / `Temperature Max` | Lowest / highest temperature since the last reset, with the time it was recorded, e.g. `72.4°F @ 11-07 14:22` |
+| `Humidity Min` / `Humidity Max` | Lowest / highest humidity since the last reset, with the time it was recorded |
+| `Min/Max Reset` | Time of the last reset (manual or automatic) |
+| `Readings Since Reset` | Number of temperature readings since the last reset |
+| `Last Reading` | Time of the most recent temperature report |
+| `sensorStatus` | `Waiting for first report – press the sensor's button, then click Refresh` until the first reading, then `Reporting` |
+| `healthStatus` | `online` / `offline` / `unknown` — see below |
+
+**Health status** is passive. It becomes `online` whenever any message arrives from the
+sensor. A check runs every 3 hours and counts the checks with no message in between; at the
+fifth such check the sensor is marked `offline`, so a silent sensor is flagged 12–15 hours
+after its last message. This avoids false alarms from a sleepy device, but a dead battery is
+not flagged quickly.
+
+### SNZB-02DR2
+| Attribute | Description |
+|---|---|
+| `Device Temp Max` / `Device Temp Min` | The sensor's own 24-hour temperature extremes, as shown on its LCD. Pushed by the sensor about hourly; also read on Refresh |
+| `Device Humidity Max` / `Device Humidity Min` | The sensor's own 24-hour humidity extremes |
+| `Device Temp Avg` / `Device Humidity Avg` | The sensor's own average temperature and humidity, apparently over the same 24 hours. Pushed with the min/max about hourly; also read on Refresh |
+| `comfortTempMin` / `comfortTempMax` | Comfort temperatures stored in the sensor (❄️ below the minimum, 🔥 above the maximum), read back after each Save |
+| `comfortHumidityMin` / `comfortHumidityMax` | Comfort humidity limits stored in the sensor, % |
+| `lcdTempUnit` | `Celsius` or `Fahrenheit` — the unit the LCD is actually using, read back after each Save |
+| `remoteDisplay` | State of the LCD's EXT line: `off`, `pending` (values sent, not yet confirmed by the sensor), `on`, `offline` or `unsupported` |
+| `ext1Temperature` / `ext1Humidity` | Values on the EXT1 line, published once the sensor confirms it has stored them |
+| `ext2Temperature` / `ext2Humidity` | Values on the EXT2 line (firmware 1.0.5 and later) |
+| `temperatureCalibration` / `humidityCalibration` | Calibration stored in the sensor (temperature in the hub's scale, humidity in %), read back after each Save and on Refresh. Non-zero when **Apply offsets in the sensor** is on, or if set in the eWeLink app |
+
+The Hubitat-tracked min/max accumulates from install or the last reset. The device's own
+24-hour values are kept by the sensor's firmware and can only be reset with a ~10-second hold
+of its button. Writing new values into them over Zigbee does not work: on firmware 1.0.2 the
+sensor answers "write accepted" but keeps its min/max unchanged (tested in 1.3.0).
+
+The averages (FC11 `0x200A` / `0x200D`) were previously logged as unexplained "reference"
+values. Zigbee2MQTT names the same attributes "average" on Sonoff's SS-Z2N sensor, and on the
+SNZB-02DR2 they always fall between the sensor's own min and max and change slowly, as a
+24-hour average would. Sonoff has not documented them.
+
+### SNZB-02M
+| Attribute | Description |
+|---|---|
+| `pressure` | Barometric pressure in the unit chosen in **Pressure unit**, with the Hubitat pressure offset applied |
+| `comfortTempMin` / `comfortTempMax` | Comfort temperatures stored in the sensor (read-only here) |
+| `comfortHumidityMin` / `comfortHumidityMax` | Comfort humidity limits stored in the sensor, % (read-only here) |
+| `temperatureCalibration` | Device-side temperature calibration, in the hub's temperature scale (read-only here) |
+| `humidityCalibration` | Device-side humidity calibration, % (read-only here) |
+| `pressureCalibration` | Device-side pressure calibration, hPa (read-only here) |
+
+---
+
+## Preferences
+
+Model-specific preferences appear only for that model.
+
+| Preference | Models | Default | Valid range | Notes |
 |---|---|---|---|---|
-| **≤ 767 px** (phone, small tablet) | 140 px | 70 px | 105 px | 90 px |
-| **> 767 px** (tablet landscape, desktop) | 180 px | 200 px | 150 px | 200 px |
+| Debug logging | all | enabled | | Turns itself off after 24 hours |
+| Description text logging | all | enabled | | Logs readings and confirmations |
+| Device model | all | Automatic | Automatic / SNZB-02P / 02D / 02LD / SNZB-02DR2 / SNZB-02M | See **Model detection** |
+| Units for temperature settings | all | °C | °C / °F | Unit for the temperature threshold, temperature offset and (SNZB-02DR2) comfort temperatures. See **Temperature units** |
+| Temperature decimal places | all | 1 | 0 / 1 / 2 | Rounded half-up. Use 0 for dashboard tiles that do not handle decimals |
+| Min time between temperature reports | all | 10 s | 1–3600 | Sent to the sensor on Save |
+| Max time between temperature reports | all | 3600 s | 10–43200 | Heartbeat: a report is sent at least this often even with no change. Sent on Save |
+| Temperature reporting threshold | all | 0.2 °C | 0.1–5.0 °C (0.2–9.0 °F) | Minimum change that triggers a report. Sent on Save |
+| Min time between humidity reports | all | 10 s | 1–3600 | Sent on Save |
+| Max time between humidity reports | all | 3600 s | 10–43200 | Sent on Save |
+| Humidity reporting threshold | all | 1 % | 1–10 | Sent on Save |
+| Pressure unit | 02M | hPa | hPa / kPa / inHg / mmHg | Unit of the `pressure` attribute |
+| Min time between pressure reports | 02M | 60 s | 1–3600 | Sent on Save |
+| Max time between pressure reports | 02M | 3600 s | 10–43200 | Sent on Save |
+| Pressure reporting threshold | 02M | 1 hPa | 1–50 | Sent on Save |
+| Temperature offset | all | 0.0 °C | −20–20 °C (−36–36 °F) | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor (see **Apply offsets in the sensor**) |
+| Humidity offset | all | 0.0 % | −20–20 % | Added to every reading in Hubitat, or on the SNZB-02DR2 optionally in the sensor |
+| Pressure offset | 02M | 0.0 hPa | −50–50 hPa | Added to every reading in Hubitat; always entered in hPa |
+| Calculate dew point and VPD | all | on | | Turning it off removes `dewPoint` and `vpd` |
+| Calculate averages | all | on | | Rolling temperature and humidity averages. Turning it off removes the average attributes and the stored totals |
+| Averaging period (days) | all | 7 | 2–365 | Length of the longer average |
+| LCD temperature unit | 02DR2 | Leave unchanged | Leave unchanged / °C / °F | Unit on the sensor's screen |
+| Comfort temperature minimum | 02DR2 | 18.0 °C | −10–60 °C (14–140 °F) | ❄️ shown below this value. Written to the sensor |
+| Comfort temperature maximum | 02DR2 | 26.0 °C | −10–60 °C (14–140 °F) | 🔥 shown above this value. Written to the sensor |
+| Comfort humidity minimum | 02DR2 | 40 % | 5–95 | ☀️ shown below this value. Written to the sensor |
+| Comfort humidity maximum | 02DR2 | 60 % | 5–95 | 💧 shown above this value. Written to the sensor |
+| Apply offsets in the sensor | 02DR2 | off | | Writes the temperature and humidity offsets to the sensor's calibration, so its LCD shows the same values as Hubitat. See **Offsets in the sensor (SNZB-02DR2)**. Wake the sensor before saving |
+| Remote display method | 02DR2 | Automatic | Automatic / Older method / Remote sources | How the remote-display commands reach the LCD. Automatic chooses by firmware. See **Remote display (SNZB-02DR2)** |
+| Auto-reset min/max daily | all | off | | Resets the Hubitat-tracked min/max every day at the time below |
+| Auto-reset time | all | `00:00` | | Time of day for the daily reset |
 
-The wider Hub column on large screens accommodates long hub names (e.g. "Felida Hubitat C8P Office") on one line. On narrow screens the Hub column word-wraps gracefully. Width switching is driven by `window.innerWidth` in JavaScript rather than CSS media queries, which is necessary because Hubitat's app page does not always set a mobile-appropriate viewport meta tag.
+Decimal preferences are range-checked by the driver rather than by the preferences page. A
+value outside the valid range is replaced with the nearest valid value on Save, and a warning
+is written to the log.
 
-### Room Column Auto-Hide
+**Temperature units.** The threshold, offset and (SNZB-02DR2) comfort temperatures are entered
+in the unit chosen in **Units for temperature settings**. When you change the unit, the driver
+converts the values already entered so they keep the same meaning (for example a 0.2 °C
+threshold becomes 0.36 °F, and an 18 °C comfort minimum becomes 64.4 °F) and logs each
+conversion. A value you change in the same Save as the unit is taken as already being in the
+new unit. To be safe, change the unit and Save first, then adjust the values. Readings in
+Hubitat always follow the hub's temperature scale, whatever this preference is set to.
 
-On any screen **≤ 480 px** wide — all iPhones in portrait orientation — the Room column is hidden automatically. It reappears when the phone is rotated to landscape or the page is opened on a wider screen.
+**Changes take effect immediately.** When you click **Save Preferences**, the driver
+re-publishes the current readings (temperature, humidity, pressure, dew point and VPD) from the
+last values it received, with the new offsets, decimal places and pressure unit applied. This
+part works whether or not the sensor is awake. Re-published events are marked `digital` and
+logged with "(re-published)". The min/max, `Last Reading` and `Readings Since Reset` are not
+changed; use **Reset Min/Max** if you want the min/max recalculated on the new offset or shown
+with the new number of decimal places.
 
-The Room **Hide Columns** toggle button still works in portrait, but any change it makes is overridden on the next orientation change; orientation controls Room on phones. On desktop (> 767 px) the toggle works normally and saves its state to local storage.
+**Sanity checks.** Raw readings outside −40 to 125 °C, 0 to 100 % or 300 to 1100 hPa are
+treated as corrupt frames: they are ignored and logged as a warning. The check is made on the
+sensor's own value, before any Hubitat offset is applied (with **Apply offsets in the sensor**
+on, the sensor's value already includes its calibration).
 
-### Horizontal Scrolling
+**Offsets in the sensor (SNZB-02DR2).** Normally the offsets are applied only in Hubitat, so the
+sensor's screen shows the uncorrected values. With **Apply offsets in the sensor** on, Save
+writes the offsets to the sensor's calibration attributes (FC11 `0x2003` and `0x2004`) and reads
+them back. The sensor then applies them to its screen and to the readings it sends (confirmed
+on firmware 1.0.2).
 
-Every table is wrapped in a horizontal scroll container. On narrow screens where a table's content is wider than the viewport — particularly the Health / Activity table with its many columns — the table scrolls horizontally without affecting the rest of the page.
-
----
-
-## Hub #1 — Local Hub
-
-Hub #1 is the hub running Device State Monitor. Its devices are accessed directly — no network calls are required.
-
-| Control | Purpose |
-|---|---|
-| **Friendly label** | Name shown in the Hub column of all tables. Defaults to the hub's location name. |
-| **Select ON-monitored devices** | Devices that appear in the ON table when their switch state is on. Accepts any switch-capable device. |
-| **Select OFF-monitored devices** | Devices that appear in the OFF table when their switch state is off. A device may be selected in both lists. |
-| **Select lock-monitored devices** | Devices that appear in the Lock State table. Uses a `capability.lock` picker. Virtual lock devices are always included regardless of the Exclude Virtual Devices setting, since these are explicit selections. |
-| **Select contact-monitored devices** | Devices that appear in the Contact Sensor table. Uses a `capability.contactSensor` picker. Like locks, these are explicit selections, so virtual devices are always included. |
-| **Toggle Command & Health Monitor Settings** | Toggle to reveal Maker API credentials for Hub #1. These are used for two purposes: (1) clickable State cells in the ON/OFF tables and embedded toggle buttons in the Unknown table; (2) the Load / Select All / Clear All actions in the health device picker. If left blank, State cells are non-interactive and health selection reverts to a manual capability picker. |
-| **Hub #1 Health Device List Actions** | Appears once Maker API credentials are entered. Choose **⟳ Load / Reload** to fetch the device list, then **✓ Select All** or **✗ Clear** to bulk-manage health selections. *(As of 1.78 these actions operate on the capability picker below directly — see note.)* |
-| **Select health/activity-monitored devices** | The capability picker — always visible, and **as of 1.78 the single source of truth** for which picker-visible devices are health-monitored on Hub #1. Devices selected here appear in the Health/Activity table when flagged; unchecking a device removes it. Disabled devices are automatically excluded. |
-| **Additional health-monitor device IDs — Hub #1** | *(New in 1.78.)* Optional. A list of numeric device **IDs** for devices that do **not** appear in the capability picker — for example Actuator-only drivers such as MQTT Display Publisher. This is the only supplementary path in 1.78. IDs already selected in the picker above are ignored here, so the two can never double-count. |
-
----
-
-## Hubs #2 and #3 — Remote Hubs
-
-Remote hubs are queried via their Maker API on every Refresh.
-
-### Enabling a remote hub
-
-Toggle **Enable Hub #2?** (or #3) to on. The connection settings expand automatically.
-
-### Connection Settings
-
-| Control | Purpose |
-|---|---|
-| **Show / Edit Connection Settings** | Toggle to reveal or hide the IP, App ID, and Token fields. Collapse it once configured to keep the section tidy. |
-| **Hub IP address** | Local LAN IP of the remote hub (e.g. 192.168.1.100). |
-| **Maker API app ID** | The number shown in the Maker API app heading on the remote hub. |
-| **Maker API access token** | The token from the Maker API app on the remote hub. |
-| **Last load status** | Shown in green (OK) or red (error) after a Load/Reload action. Displays counts of switch, lock, and contact sensor devices loaded, enabled devices, and disabled devices detected. |
-
-### Actions Dropdown
-
-All bulk device management for remote hubs is done through the **Actions** dropdown. Each selection takes effect immediately on the next page render.
-
-| Action | Effect |
-|---|---|
-| **⟳ Load / Reload Device List** | Fetches the current device list from the remote hub's Maker API. Must be run before device pickers appear. Re-run whenever devices are added to or removed from the Maker API app on the remote hub. |
-| **✓ Select All ON-monitored devices** | Selects all switch-capable devices for ON monitoring. |
-| **✗ Clear ON-monitored devices** | Removes all ON monitoring selections. |
-| **✓ Select All OFF-monitored devices** | Selects all switch-capable devices for OFF monitoring. |
-| **✗ Clear OFF-monitored devices** | Removes all OFF monitoring selections. |
-| **✓ Select All lock-monitored devices** | Selects all lock-capable devices for lock state monitoring. |
-| **✗ Clear lock-monitored devices** | Removes all lock monitoring selections. |
-| **✓ Select All contact-monitored devices** | Selects all contact-sensor devices for contact state monitoring. |
-| **✗ Clear contact-monitored devices** | Removes all contact monitoring selections. |
-| **✓ Select All health-monitored devices** | Selects all devices (switch and non-switch) for health/activity monitoring. |
-| **✗ Clear health-monitored devices** | Removes all health monitoring selections. |
-
-### Device Pickers
-
-After loading, five pickers appear:
-
-**Switch Device Selection** — shows only switch-capable devices. Use the **Filter by name or room** field to narrow a long list. The ON-monitored and OFF-monitored pickers each show the count of devices available in the loaded list.
-
-**Lock Device selector** — shows only lock-capable devices exposed to the Maker API. Select the devices whose lock state you want to appear in the Lock State table.
-
-**Contact sensor selector** — shows only contact-sensor devices exposed to the Maker API. Select the sensors you want in the Contact Sensor table. *(Upgrading from a version before 1.56? Run **⟳ Load / Reload Device List** once to populate this selector.)*
-
-**Health / Activity device selector** — shows all devices exposed to the Maker API, not just switch-capable ones, so you can monitor sensors, remotes, and other non-switch devices for activity.
-
-### Disabled Devices on Remote Hubs
-
-The Health/Activity table makes a best-effort attempt to exclude disabled devices automatically: on every Refresh it cross-checks selected device IDs against the hub's live device list and skips any ID that no longer appears there (disabled devices typically drop off that list). IDs flagged as disabled during the last Load/Reload are also cached and excluded at refresh time.
-
-This filtering covers most cases, but is not guaranteed — the Maker API does not expose disabled state reliably in all Hubitat versions. If a disabled device still appears in the Health/Activity table, the fallback remedies in order of preference are:
-
-1. **Deselect it** from the health device picker — the cleanest ongoing solution.
-2. **Enter its device ID** in the **Manually excluded health-monitor device IDs** field — the device is then permanently excluded from the health table regardless of its state. The device ID is the number in its edit URL: `/device/edit/169`.
-
-Note that the exclusion field applies only to the Health/Activity table, not the ON/OFF/Unknown tables.
+- Hubitat adds only the part of the offset the sensor has not confirmed applying, so a reading
+  never gets the offset twice, even if the sensor was asleep during the Save. Until the read-back
+  arrives, Hubitat keeps adding the whole offset.
+- Turning the setting off writes 0 back to the sensor; once the sensor confirms 0, the offsets
+  are applied in Hubitat again. Wake the sensor before saving either way.
+- Turning it on replaces any calibration set earlier in the eWeLink app.
+- The `temperatureCalibration` and `humidityCalibration` attributes show what the sensor holds;
+  for example, a +3 °F offset shows as `temperatureCalibration` 3.0 °F on a °F hub (the sensor
+  stores it as 1.67 °C). Differences of less than half the sensor's 0.01 step are treated as
+  that rounding, so Hubitat adds nothing and matches the sensor's screen.
 
 ---
 
-## Report Tables
+## Commands
 
-### ON Devices Table
-
-Lists every monitored device currently reporting switch state **on**. Devices also selected in the OFF-monitored list are highlighted with a gold star (★) and orange-colored name, indicating they are being watched in both directions.
-
-When Maker API credentials are configured, the State cell (showing **ON**) is clickable. Click it to send an **off** command; the cell updates in-place without a full page refresh.
-
-### OFF Devices Table
-
-Lists every monitored device currently reporting switch state **off**. Same dual-monitoring highlight applies.
-
-Click the State cell (showing **OFF**) to send an **on** command.
-
-### Unknown State Table
-
-Lists monitored devices reporting a switch state other than on or off (e.g. null, initializing, or an unrecognized value). Can be hidden in Sort & Display Options. When Maker API credentials are configured, the State cell contains **→ ON** and **→ OFF** mini-buttons to send either command.
-
-### Lock State Table
-
-Lists all explicitly selected lock devices and their current lock state. Devices are selected per hub:
-
-- **Hub #1** — use the **Select lock-monitored devices** capability picker in the Hub #1 section.
-- **Hubs #2 and #3** — use the **Lock Device selector** that appears after running Load / Reload.
-
-| Lock State | Display |
+| Command | Description |
 |---|---|
-| **locked** | Green, bold |
-| **unlocked** | Red, bold |
-| **unknown** or other | Gray |
-
-The table also includes a **Battery %** column showing the current battery level for each lock. Color coding matches the Health / Activity table: green ≥ 40 %, orange 20–39 %, red < 20 %. Locks with no battery attribute report *n/a*.
-
-The table can be hidden in Sort & Display Options. It is sortable by Device Name, Room, Hub, Lock State, or Battery %. Virtual lock devices (e.g. Virtual Lock driver) are always shown regardless of the **Exclude virtual devices** setting, because they are individually hand-picked rather than bulk-selected.
-
-### Contact Sensor Table
-
-Lists explicitly selected contact sensors. Selection works exactly like locks:
-
-- **Hub #1** — use the **Select contact-monitored devices** capability picker in the Hub #1 section.
-- **Hubs #2 and #3** — use the **Contact sensor selector** that appears after running Load / Reload.
-
-By default the table lists **only sensors currently open**, with a heading of the form *Open Contact Sensors: 2 open of 14 monitored* — or *None open* in green when everything is closed. Turn off **Show only sensors currently OPEN?** in Sort & Display Options to list every selected sensor with its state instead.
-
-| Contact State | Display |
-|---|---|
-| **open** | Red, bold |
-| **closed** | Green, bold |
-| **unknown** or other | Gray |
-
-A **Battery %** column uses the same color coding as the Lock State table: green ≥ 40 %, orange 20–39 %, red < 20 %; sensors with no battery attribute report *n/a*.
-
-The table can be hidden in Sort & Display Options and is sortable by Device Name, Room, Hub, Contact State, or Battery %. As with locks, virtual devices are always shown because the sensors are individually hand-picked.
-
-### Health / Activity Monitor Table
-
-Lists any health-monitored device that meets one or more of:
-
-| HE Status / Attribute | Meaning |
-|---|---|
-| **OFFLINE** | Hub reports device is offline |
-| **INACTIVE** | Hub reports device is inactive |
-| **NOT PRESENT** | Hub reports device is not present (typically for presence sensors) |
-| **DISCONNECTED** | Device's `connectionStatus` attribute reports disconnected (e.g. MQTT Display Publisher and similar devices) |
-| **HEALTH OFFLINE** | Device's `healthStatus` attribute reports offline (shown when HE status itself is absent) |
-| **Late Activity (>Xh)** | Last recorded device activity is older than the configured threshold |
-
-The **Issue** column may contain multiple reasons separated by commas if more than one condition applies.
-
-On **Hub #1**, the devices monitored here come from two independent sources: everything you check in the **capability picker** (the single source of truth as of 1.78 — unchecking a device reliably removes it), plus any IDs you list in **Additional health-monitor device IDs — Hub #1** for devices the picker cannot show (e.g. Actuator-only drivers). IDs already in the picker are ignored in the additional field, so nothing is counted twice.
-
-For child devices (e.g. individual endpoints of a USB switch hub), last activity is resolved from the parent device if the child has no activity record of its own. On Hub #1 this parent lookup goes through Hub #1's own Maker API, using the same credentials configured for toggle links — without them, the fallback is skipped (with a single info log entry) and the child is evaluated on its own record.
-
-If a hub's per-device health checks start failing (e.g. its Maker API stops responding mid-refresh), a circuit breaker marks that hub as not responding after three consecutive failures and skips the remaining checks, replacing a long cascade of per-device warnings with one actionable log entry.
-
-The table contains the following columns, all independently hideable via the Hide Columns toggle bar:
-
-| Column | Description |
-|---|---|
-| **Device Name** | Clickable link to the device edit page |
-| **Room** | Room the device is assigned to |
-| **Hub** | Friendly hub label |
-| **Issue** | Summary of the condition(s) that caused the device to appear in this table |
-| **HE Status** | Hubitat's reported device status (OFFLINE, INACTIVE, NOT PRESENT, DISCONNECTED, ACTIVE, etc.) — shown in red when problematic |
-| **Health Status** | Value of the device's `healthStatus` attribute — green for online, red for offline |
-| **Last Activity** | Timestamp of the most recent device event, color-coded by age |
-| **Battery %** | Current battery level — green ≥ 40 %, orange 20–39 %, red < 20 % |
-| **Last Battery** | Timestamp of the last battery report |
-
-### Rules with Private Boolean FALSE Table
-
-*(New in 1.60, extended through 1.74.)* Lists Rule Machine and Button Controller child rules whose current **Private Boolean is FALSE**, plus any rules that remained **UNKNOWN** after read retries. It appears immediately after the Health / Activity table.
-
-| Column | Description |
-|---|---|
-| **Rule** | Clickable link to the rule's configuration page on its hub. Hubitat status suffixes (e.g. *(Required Expression false)*) are shown with their original coloring. |
-| **App Type** | RM (Rule Machine) or BC (Button Controller) |
-| **Hub** | Friendly hub label |
-| **PB State** | FALSE in red, TRUE in blue, UNKNOWN in orange — clickable where supported (see below) |
-| **Last Run** | The rule's last run time, or *Never / unavailable* |
-
-The table heading reports the live FALSE count (and an UNKNOWN count when applicable), and a summary line below it shows how many RM/BC rules were scanned across how many hubs, plus the time and duration of the last completed scan.
-
-#### Which hubs are scanned
-
-Three per-hub controls in Sort & Display Options — **Show Rules with Private Boolean FALSE table for Hub 1 / 2 / 3** — select which hubs are **scanned and displayed**. An unchecked hub receives no discovery request and no per-rule status reads, so a Hub 1-only scan spends no time on Hubs 2 or 3. Hubs #2/#3 must also be enabled normally. Turning a hub's control off hides its cached rows immediately; run **Scan PB FALSE Rules** after changing hub selections to rebuild the cache from only the selected hubs.
-
-PB scanning reads Hubitat's internal app/status pages (remote hubs via their configured IP), so it requires **Hub Login Security to be OFF** on each scanned hub.
-
-#### How scanning works
-
-- Scans run **asynchronously** with a six-minute watchdog, so hundreds of rules do not hold the app page open. While a scan is running, the previous completed results remain visible and the page auto-polls every 30 seconds until the scan finishes.
-- Start a scan with either **Scan PB FALSE Rules** button; a scan also starts automatically after clicking **Done** and on the first page open after installing/upgrading (when at least one hub's PB control is enabled).
-- Rule status is read strictly **one rule at a time** across all selected hubs. An unreadable rule is retried up to three times; if it still cannot be read, it is published as **UNKNOWN** with its linked rule name available for manual inspection — known FALSE results from the same scan remain visible. Read failures are never mis-reported as FALSE.
-- A successful read with no stored Private Boolean is correctly treated as FALSE (Rule Machine's default).
-
-#### Clickable PB State cells
-
-Click a **FALSE** cell to set that rule's Private Boolean **TRUE**. The cell turns into a blue clickable **TRUE** and the row *remains listed until the next PB scan*, so the click can be undone — clicking the TRUE cell sets the rule's Private Boolean back FALSE. Setting FALSE is deliberately possible only for rows this table itself set TRUE, so arbitrary rules can never be driven FALSE from here. A footnote below the table notes when changed rows are being retained.
-
-- **Hub #1 rules** act directly through Rule Machine's `RMUtils` (RM 5.0) on the local hub. This uses a small self-enabling OAuth endpoint in the app; if the endpoint is inactive, an orange note appears — re-open or re-save the app (or enable OAuth manually in Apps Code).
-- **Hub #2/#3 rules** become clickable once that hub's **Private Boolean Manager** (1.52+) app ID and OAuth access token are entered in the PB table settings (Sort & Display Options — the inline instructions explain where to find both on that hub). The click is relayed **server-side from Hub #1** to PBM's `/setPB` endpoint on the remote hub, and the change is verified: the table updates only after PBM confirms success, and transport/HTTP/credential/PBM errors surface in a browser alert and the log. Remote hubs without PBM credentials show read-only cells with a tooltip explaining how to enable click-to-set. *(Note: a successful relayed click is silent in the remote PBM's log unless PBM's debug logging is enabled.)*
-- Clicks are disabled while a PB scan is running or while another PB change is in flight, to avoid a completing scan racing a user change.
+| **Configure** | Detects the model, sends the reporting configuration (and SNZB-02DR2 settings), then reads current values and the model's device settings. Wake the sensor first. |
+| **Refresh** | Reads current values and the model's device settings; on the SNZB-02DR2 also its own 24-hour min/max. Wake the sensor first. |
+| **Reset Min/Max** | Clears the Hubitat-tracked min/max and the readings counter. Also run automatically by the daily auto-reset. Does not affect the SNZB-02DR2's own 24-hour values. |
+| **Reset Averages** | Clears the rolling averages and their stored totals, and starts collecting again from the current readings. Separate from **Reset Min/Max**, and not affected by the daily auto-reset. |
+| **Initialize** | Clears all driver state, including the min/max, sets `sensorStatus` to "Waiting for first report…", then runs Configure. Wake the sensor first. Not needed just to apply preference changes — Save Preferences does that. |
+| **Set Remote Temperature** | SNZB-02DR2 only. Shows a temperature on the LCD's EXT line. Parameters: the temperature, in the hub's scale, and the slot (`EXT1`, the default, or `EXT2`). No need to wake the sensor. |
+| **Set Remote Humidity** | SNZB-02DR2 only. Shows a humidity (%) on the EXT line. Same parameters. Needs firmware 1.0.4 or later. |
+| **Remote Display Off** | SNZB-02DR2 only. Clears the EXT line, so the LCD shows only the sensor's own readings again. |
 
 ---
 
-## Hubitat Safety Monitor (HSM) Status
+## Remote display (SNZB-02DR2)
 
-When HSM is installed on Hub #1, two status lines appear above the report tables on every Refresh. HSM on Hubs #2 and #3 can optionally be shown as well (see [Remote HSM](#remote-hsm--hubs-2-and-3) below). When any remote HSM display is enabled, every HSM line is labeled with its hub's friendly name.
+The SNZB-02DR2 can show a reading from another sensor on its LCD, on the line labelled
+**EXT1** (and, on newer firmware, **EXT2**). Sonoff offers this through its own gateways; this
+driver does it from Hubitat. Thanks to **temes33** on the Hubitat Community forum for
+discovering that it works from Hubitat.
 
-### HSM Status
+**Typical use:** a Rule Machine rule triggered when another sensor's temperature changes, with
+the action **Run custom action → this sensor → `setRemoteTemperature`**, parameters: a number
+(the other sensor's temperature, e.g. from a variable) and a string, `EXT1`.
 
-Shows the current intrusion arm state as a color-coded badge:
+**What the sensor accepts depends on its firmware** (shown in the device data as
+**Firmware MT**, e.g. `1286-0810-00001002` = 1.0.2, or **Software Build**):
 
-| Status | Color | Meaning |
+| Firmware | Method | Slots | Humidity |
+|---|---|---|---|
+| Before 1.0.5 | Older method: FC11 attributes `0x600E`, `0x600D`, `0x6018` | EXT1 only | Needs 1.0.4 or later |
+| 1.0.5 and later | Remote sources: FC11 attributes `0x600E` and `0x601E` (as in Zigbee2MQTT) | EXT1 and EXT2 | Yes |
+
+With **Remote display method** on Automatic, the driver chooses from the firmware version. If a
+sensor rejects the 1.0.5 method, the driver switches to the older method by itself. On firmware
+before 1.0.4, the first remote humidity is rejected; the driver logs one warning and sends
+temperature only from then on. Saving preferences makes the driver check both again (for
+example after a firmware update).
+
+**Sleeping sensor.** A value is sent at once, which works if the sensor is awake. If it is not
+confirmed, the driver sends it again the moment the sensor next sends anything — a reading,
+or the message it sends when its button is pressed — at most once every 8 seconds and up to 10
+times. Only the latest value for each slot is kept, so a rule can call the command as often
+as it likes. `remoteDisplay` shows `pending` until the sensor confirms, then `on`; the log
+shows, for example, `Remote display: EXT1 temperature 70.0°F confirmed by the sensor`.
+
+**On the LCD:**
+
+- Temperatures are entered in the hub's scale and sent in °C; the sensor converts them to its
+  own LCD unit. Its conversion to °F cuts off digits instead of rounding (70 °F sent as
+  21.11 °C showed 69.9), so on a °F screen the driver sends the value that displays exactly
+  the tenth entered.
+- On firmware 1.0.2 the EXT1 line takes the place of the temperature min/max on the screen.
+  The humidity MAX/MIN stay visible. **Remote Display Off** brings the temperature min/max back.
+- In tests on firmware 1.0.2 the screen showed a new value within seconds of the sensor
+  receiving it. The sensor also redraws the EXT line when its button is pressed briefly, and
+  updates remote values about every 30 minutes.
+- Only numbers can be shown. Accepted ranges: −50 to 125 °C and 0 to 100 % with the older
+  method; −20 to 60 °C and 0 to 99.9 % with the 1.0.5 method.
+- The EXT line cannot show 99.0 or more in the LCD's unit: it shows `HHH` instead (seen with
+  99, 99.0 and 105 °F; 98.9 °F shows correctly). The driver therefore sends higher
+  temperatures as 98.9 and logs a note.
+
+**Tested:** firmware 1.0.2, older method, temperature on EXT1 (20, 70, 73, 75 and 77 °F),
+with the button and with automatic re-send, and **Remote Display Off**. The 1.0.5 method and
+EXT2 follow the Zigbee2MQTT implementation but have not yet been tested on a sensor; reports
+from anyone with firmware 1.0.5 are welcome.
+
+---
+
+## Pressure (SNZB-02M)
+
+The SNZB-02M sends pressure in two attributes of the Pressure Measurement cluster (`0x0403`):
+`0x0000` (INT16, whole hPa) and `0x0004` (INT32, 0.01 hPa), sometimes in the same frame. The
+driver publishes from `0x0004` whenever it is present, giving 0.1 hPa precision, and uses
+`0x0000` only when no high-resolution value has arrived for more than twice the maximum
+pressure reporting interval plus two minutes. This stops the value bouncing between, say,
+1006 and 1006.6.
+
+The value is shown in the **Pressure unit**: hPa (= mbar) and mmHg to 0.1, kPa and inHg to
+0.01. It is station pressure as measured at the sensor, not adjusted to sea level; use the
+**Pressure offset** to match a local sea-level (QNH) reading if you prefer.
+
+## Dew point and VPD
+
+Neither is sent by the sensors; the driver calculates both each time a temperature or humidity
+reading arrives, using the offset-corrected values.
+
+- **Dew point** uses the Magnus formula (a = 17.62, b = 243.12 °C).
+- **VPD** is the saturation vapour pressure (Tetens: 0.6108 × e^(17.27·T / (T + 237.3)) kPa)
+  multiplied by (1 − RH/100), shown in kPa to 0.01.
+
+## Averages
+
+The driver keeps two rolling averages of temperature and humidity: over the last 24 hours, and
+over the last N days (**Averaging period (days)**, 2 to 365, default 7). They work on every model
+and are calculated in Hubitat from the readings the sensor sends, using the offset-corrected
+values; the SNZB-02DR2's own `Device Temp Avg` / `Device Humidity Avg` are separate.
+
+- **Time-weighted.** The sensors report when the value changes by the reporting threshold, plus a
+  heartbeat at the max reporting interval. Each reading counts for as long as it stayed current,
+  so a period with many reports (a changing temperature) does not outweigh a steady one.
+- **Gaps are left out.** A reading counts for at most twice the max reporting interval (at least
+  30 minutes). If the sensor goes silent, its last value is not stretched over the gap.
+- **Exact windows.** Totals are stored per hour for the last day and per day for the longer
+  period. Each average covers exactly 24 hours or N days back from now; the oldest hour or day in
+  the window is counted in proportion to the part of it that still falls inside.
+- **Coverage.** Until enough data has been collected, `averagesInfo` shows how much each average
+  covers (for example `2.5 of 7 days`). Averages start when this version is installed; the hub
+  keeps too little event history to work them out from past readings.
+- **Updates.** The averages are updated with every reading and once an hour, so the 24-hour window
+  moves on even when the readings are steady. After updating the driver code, click **Save
+  Preferences** once to start the hourly update.
+- **Offsets.** A reading is stored with the offset in force when it arrived; changing an offset
+  affects later readings only. Use **Reset Averages** to start again with the new offset.
+- **Storage.** About 20 KB of driver state per device for a 365-day period (totals for at least 31
+  days are always kept, so lengthening the period later uses data already collected).
+
+---
+
+## FAQ
+
+### Can I get temperature updates more often?
+Usually, yes. Reports are triggered by change: the sensor sends a temperature report whenever
+the reading moves by at least the **Temperature reporting threshold**, no more often than the
+**Min time** interval, and sends a heartbeat at the **Max time** interval even if nothing has
+changed. For use as a remote sensor for a thermostat, a threshold of 0.1–0.2 °C and a max
+interval of 300–600 s are reasonable starting points. Wake the sensor before saving and check
+the log for "reporting configuration accepted". More frequent reporting shortens battery life.
+
+### Can the temperature units be changed?
+There are up to three separate settings:
+
+- **Readings in Hubitat** always follow the hub's temperature scale (**Settings → Location**).
+- **Temperature settings** (threshold, offset, comfort limits) can be entered in °C or °F with
+  **Units for temperature settings**.
+- **The SNZB-02DR2's own LCD** is set with **LCD temperature unit**.
+
+### My dashboard tile can't show decimals
+Set **Temperature decimal places** to 0. Values are rounded half-up (72.5 → 73).
+
+### Why are there no readings after I switched to this driver?
+The sensor is asleep most of the time and does not hear the hub, so changing drivers does not
+wake it; it keeps reporting on its own schedule (up to the last configured heartbeat, one hour
+by default). Press its button, then click **Configure** or **Refresh**, and readings arrive
+within seconds. Until then `sensorStatus` says "Waiting for first report…"; the readings stay
+empty rather than holding a placeholder that could mislead rules (0 °F would trigger a freeze
+rule, for example).
+
+### The log says my model is not recognized
+Set **Device model** to the matching model, Save, and reopen the page for its settings.
+Please report the model string shown in the log so it can be added.
+
+### Is there a Ping command?
+No. Ping sends a request and times the reply, but a sleeping sensor does not answer, so it
+nearly always timed out. Use `healthStatus` instead.
+
+### Can the sensors receive firmware updates through Hubitat?
+Not as far as is known. Hubitat only performs Zigbee OTA updates for firmware images it hosts
+itself, and Sonoff images are not among them. To update, temporarily pair the sensor to a
+platform that carries Sonoff firmware (a Sonoff/eWeLink hub, Zigbee2MQTT or ZHA), update it
+there, then reset and re-pair it to Hubitat. On the SNZB-02DR2, firmware 1.0.5 adds the EXT2
+slot and remote humidity on both slots; firmware 1.0.4 adds remote humidity on EXT1.
+
+### Can the EXT line show text?
+No. The sensor only receives a number for each slot and only draws numbers. Numeric codes
+(for example 1.0 = garage door open) work, within the accepted ranges.
+
+---
+
+## Known Limitations
+
+- **Pressure capability on every model** — see **Model detection**.
+- **SNZB-02D device settings.** The SNZB-02D is treated like the SNZB-02P: its display and
+  comfort settings, if any, are not read or changed. Setting **Device model** to SNZB-02DR2
+  would try the SNZB-02DR2's settings on it, untested.
+- **SNZB-02LD.** Temperature only, with no fingerprint yet, so a newly paired SNZB-02LD needs the
+  driver chosen from the **Type** dropdown. Its LCD unit and temperature calibration, which other
+  platforms can change, are not read or changed here; set them on the sensor or in the eWeLink app.
+- **SNZB-02M settings are read-only.** Its comfort thresholds and calibration are read without
+  Sonoff's manufacturer code; this driver does not change them. If those attributes stay empty
+  after a Refresh with the sensor awake, please report it.
+- **SNZB-02DR2 open questions.** Attribute `0x200E` is still unexplained, it is not yet known when
+  the sensor's own 24-hour min/max window resets. See the SNZB-02DR2 driver's README for the
+  research notes.
+- **SNZB-02DR2 remote display.** The firmware 1.0.5 method (and so EXT2) is untested, and so
+  is remote humidity on firmware 1.0.4. Whether the sensor keeps showing a remote value
+  indefinitely, or blanks it when no new value arrives, is not yet known.
+
+---
+
+## Zigbee Cluster Summary
+
+| Cluster | ID | Models | Usage |
+|---|---|---|---|
+| Basic | `0x0000` | all | Device information (model string used for detection) |
+| Power Configuration | `0x0001` | all | Battery % (attr 0x0021, reported); voltage (attr 0x0020, read on Refresh except SNZB-02M) |
+| Identify | `0x0003` | all | Standard. The SNZB-02DR2 sends Identify when its button is pressed; the driver treats it as a wake-up |
+| Poll Control | `0x0020` | all | Sleepy-device check-in (not changed by this driver) |
+| Temperature Measurement | `0x0402` | all | Temperature, 0.01 °C resolution |
+| Pressure Measurement | `0x0403` | 02M | Attr 0x0000 (whole hPa) and 0x0004 (0.01 hPa) |
+| Relative Humidity | `0x0405` | all | Humidity, 0.01 % resolution |
+| Sonoff Private (FC11) | `0xFC11` | 02DR2, 02M | Comfort thresholds, LCD unit, calibration, device min/max, remote display — see below |
+| Sonoff Private (FC57) | `0xFC57` | all | Device management; not used by this driver |
+| Time | `0x000A` | 02P, 02D, 02DR2 | Out-cluster |
+| OTA Upgrade | `0x0019` | all | Out-cluster |
+
+Battery reporting is configured for 60 s minimum, 4 hours maximum, on any change.
+
+### FC11 attributes used
+
+On the SNZB-02DR2 these are read and written with Sonoff's manufacturer code `0x1286`, except
+the remote-display attributes (`0x600D`, `0x600E`, `0x6018`, `0x601E`), which are written
+without it, as Zigbee2MQTT does. On the SNZB-02M they are read without it.
+
+| Attribute | Type | Models | Use |
+|---|---|---|---|
+| `0x0003` | INT16, °C × 100 | 02DR2 (R/W), 02M (R) | Comfort temperature maximum |
+| `0x0004` | INT16, °C × 100 | 02DR2 (R/W), 02M (R) | Comfort temperature minimum |
+| `0x0005` | UINT16, % × 100 | 02DR2 (R/W), 02M (R) | Comfort humidity minimum |
+| `0x0006` | UINT16, % × 100 | 02DR2 (R/W), 02M (R) | Comfort humidity maximum |
+| `0x0007` | UINT16 | 02DR2 (R/W) | LCD temperature unit (0 = °C, 1 = °F). Rejects UINT8 writes (`0x8D`); the driver retries other types if needed |
+| `0x2003` | INT16, °C × 100 | 02DR2 (R/W), 02M (R) | Temperature calibration (02DR2: written by **Apply offsets in the sensor**) |
+| `0x2004` | INT16, % × 100 | 02DR2 (R/W), 02M (R) | Humidity calibration (02DR2: written by **Apply offsets in the sensor**) |
+| `0x2007` | INT16, hPa × 100 | 02M (R) | Pressure calibration |
+| `0x2008` / `0x2009` | °C × 100 (the sensor declares `0x2008` as UINT16 and `0x2009` as INT16; both read as signed) | 02DR2 (R; writes are acknowledged but ignored) | Device 24-hour temperature max / min |
+| `0x200B` / `0x200C` | UINT16, % × 100 | 02DR2 (R; writes are acknowledged but ignored) | Device 24-hour humidity max / min |
+| `0x200A` | INT16, °C × 100 | 02DR2 (R) | Device 24-hour average temperature (`Device Temp Avg`) |
+| `0x200D` | UINT16, % × 100 | 02DR2 (R) | Device 24-hour average humidity (`Device Humidity Avg`) |
+| `0x600E` | UINT8 | 02DR2 (R/W) | Remote display. Before 1.0.5: 0 = built-in sensor, 1 = external value. 1.0.5 and later: 0 = unbound, 1 = using, 2 = offline |
+| `0x600D` | INT16, °C × 100 | 02DR2 (R/W) | Remote temperature on EXT1 (before 1.0.5) |
+| `0x6018` | UINT16, % × 100 | 02DR2 (R/W) | Remote humidity on EXT1 (before 1.0.5; needs 1.0.4) |
+| `0x601E` | ARRAY of UINT8 | 02DR2 (W) | Remote sources, 1.0.5 and later. Header `01 01 00 03 <length> <count>`, then per item: type (0 temperature, 1 humidity), slot (0 EXT1, 1 EXT2), state (1 online), value length (2), value × 100 little-endian. Written with a hand-built frame, since Hubitat's `writeAttribute` cannot encode arrays |
+
+---
+
+## Changelog
+
+| Version | Date | Notes |
 |---|---|---|
-| **Armed Away** | Red | Intrusion alerts armed for Away mode |
-| **Arming Away…** | Orange | Exit delay in progress before Armed Away activates |
-| **Armed Home** | Orange | Intrusion alerts armed for Home mode |
-| **Arming Home…** | Orange | Exit delay in progress before Armed Home activates |
-| **Armed Night** | Purple | Intrusion alerts armed for Night mode |
-| **Arming Night…** | Purple | Exit delay in progress before Armed Night activates |
-| **Intrusion Disarmed** | Green | Intrusion alerts disarmed — smoke/water/custom monitoring remains armed |
-| **All Monitoring Disarmed** | Green | Intrusion, smoke, water, and custom rule alerts all disarmed |
-
-> **Note:** `hsmStatus` only reflects the intrusion arm state. Smoke, water, and custom monitoring rules stay armed even while intrusion is disarmed, until *All Monitoring* is disarmed. The badge therefore reads **Intrusion Disarmed** with an inline reminder that smoke/water/custom monitoring remains armed — matching the hub UI's own "Intrusion Disarmed, Water/Smoke/Gas/CO Armed" wording. There is no queryable arm state for smoke/water specifically; this is a Hubitat platform limitation.
-
-### HSM Alert
-
-Shows the most recent active alert, or **No current alert** in green when none is present. When an alert is active, the label blinks red.
-
-| Alert | Label |
-|---|---|
-| `intrusion` | INTRUSION (Away) |
-| `intrusion-home` | INTRUSION (Home) |
-| `intrusion-night` | INTRUSION (Night) |
-| `smoke` | SMOKE |
-| `water` | WATER LEAK |
-| `rule` | CUSTOM RULE |
-| *(poll-detected)* | ACTIVE ALERT |
-
-For custom rule alerts, the rule's name is appended to the label (e.g. *CUSTOM RULE — Door Locks unlocked*), along with the time the alert was first seen.
-
-**How alerts are tracked.** Two mechanisms work together:
-
-1. **Events (instant).** The app subscribes to Hubitat's `hsmAlert` location event. Both of HSM's cancellation values are honored — plain `cancel` (intrusion/smoke/water alerts) and `cancelRuleAlerts` (custom rule alerts). Transient `arming` / `armingHome` / `armingNight` notices are ignored rather than latched as alerts.
-2. **Verification (every Refresh — recommended, on by default).** HSM offers no query API for alerts, so a single missed event would otherwise leave the badge wrong until the next event. When **Verify the HSM alert state against the hub on every refresh?** is enabled, each Refresh also reads the hub's own pages and reconciles the badge with reality:
-   - With the **HSM app ID** configured (the number in HSM's URL, e.g. `/installedapp/configure/2`), the live alert text is read straight from the HSM app page — a missed alert appears as *ACTIVE ALERT — Custom Rule Alert: Door Locks unlocked*.
-   - Without it, the hub's Apps list is scanned for the red **ALERT!** suffix HSM appends to its own app label while alerting (alert presence only, no detail).
-   - Missed alerts are detected and displayed; stale alerts are auto-cleared. A footnote under the badge reports whether verification succeeded on that refresh.
-   - Verification requires **Hub Login Security to be OFF** on Hub #1. If the pages can't be read, an orange note appears and the badge falls back to event-only behavior.
-
-**Cancel HSM Alerts button** *(new in 1.79).* While an alert is active, a **Cancel HSM Alerts on _hub_** button appears next to **Refresh Table**. This actually cancels the alert in HSM — it is not just a display reset:
-
-1. Click **Cancel HSM Alerts on _hub_**. Nothing is sent yet; a red confirmation box appears instead, because cancelling also silences sirens and light alerts.
-2. Click **Yes — Cancel HSM Alerts on _hub_** within 60 seconds (or **No — Leave Alerts Active**). An unconfirmed request expires on its own.
-3. The app sends HSM's documented `hsmSetArm` → `cancelAlerts` command on Hub #1, or calls `/hsm/cancelAlerts` through that hub's Maker API on Hubs #2/#3.
-4. A note under the badge reports the result on the following refreshes:
-   - **✓ Cancel sent … HSM now reports no active alert** — done.
-   - **Cancel sent — waiting for HSM to confirm** — HSM had not finished processing it when the page was built (within ~20 seconds of the click); click **Refresh Table** again.
-   - **Cancel sent …, but HSM is reporting an active alert again** — see below.
-   - **Cancel HSM Alerts failed: …** — the command could not be sent (for a remote hub, check it is reachable and that the **HSM** toggle is enabled in its Maker API app).
-
-> **Cancelling is not disarming.** HSM stops the in-progress alert but stays armed. If the condition that caused the alert is still true — a door still unlocked for a custom rule like *Door Locks unlocked*, a water sensor still wet — HSM can alert again immediately, and the badge will show the alert again with the note above. Fix the condition first, or disarm the affected monitoring in HSM. If the condition is definitely cleared and the alert still returns, cancel it directly in the HSM app on that hub.
-
-Remote cancel buttons appear only for hubs whose HSM display is enabled, whose alert was detected on this refresh, and whose Maker API IP, app ID and token are configured. Every cancel is logged (`HSM: cancelAlerts sent to …`).
-
-**Clear HSM Alert Display button.** This only resets the app's own copy of the alert; it does not touch HSM. As of 1.79 it appears only while an alert is latched **and** the alert state could not be verified on that refresh (verification turned off, or the hub's pages unreadable) — for example when a cancel event was missed and nothing can re-check the hub. When verification succeeds, a still-active alert would simply be re-detected on the same refresh, so the button is not offered; use **Cancel HSM Alerts** instead. The buttons and the alert badge always agree within the same refresh.
-
-Because Hubitat app pages never update spontaneously while open, a new alert (or its clearing) becomes visible on the next **Refresh Table** click or page load — never while the page simply sits idle.
-
-> **Important:** After installing or updating the app code, open the app and click **Done** once so subscriptions and settings re-initialize.
-
-### Remote HSM — Hubs #2 and #3
-
-HSM status and alerts for the remote hubs can be displayed under Hub #1's badge. This is **off by default** — enable it per hub in Sort & Display Options (**Also show HSM status for Hub #2 / #3?**).
-
-- **Status** is fetched from the remote hub's Maker API `/hsm` endpoint using the credentials already configured for that hub. This requires the **HSM** toggle ("Allow control of HSM") to be enabled inside that hub's Maker API app; until it is, the badge shows *Unavailable* with a hint.
-- **Alerts** use the same page verification as Hub #1, pointed at the remote hub's IP. Configure the optional **Hub #2/#3 HSM app ID** (the number in HSM's URL *on that hub*) to get live alert text; otherwise the remote Apps list is scanned for the **ALERT!** label. Requires Hub Login Security OFF on the remote hub — otherwise the alert line shows *Not verified* with a note.
-- **Remote alerts are poll-only.** Hubitat location events do not cross hubs, so there is no event path from remote HSMs — remote alert lines are marked *(poll-only — updates on each refresh)* and appear/clear on each Refresh, which is when the report updates anyway.
-- **Cancelling remote alerts** *(1.79)*. When a remote hub's alert is detected, a **Cancel HSM Alerts on _hub_** button appears (with the same confirmation step as Hub #1). The command is sent through that hub's Maker API `/hsm/cancelAlerts` endpoint, so it needs the same **HSM** toggle in that Maker API app as the status line. The result is confirmed on the next Refresh by the same page check that drives the alert line.
-
-The HSM badges can be hidden entirely via the **Show HSM status above the tables?** toggle in Sort & Display Options.
+| 1.4.2 | 2026-11-25 | SNZB-02LD (probe thermometer with LCD) recognized as a supported model and given the SNZB-02P / 02D features, without the "not recognized" warning. Spelling of that warning corrected to "recognized". |
+| 1.4.1 | 2026-11-19 | Renamed `temperatureAvgPeriod` / `humidityAvgPeriod` to `temperatureAvgLongTerm` / `humidityAvgLongTerm`, so the name does not read as the period's length. The old attributes are removed when you click **Save Preferences**. |
+| 1.4.0 | 2026-11-19 | Rolling time-weighted averages of temperature and humidity on every model: `temperatureAvg24h`, `humidityAvg24h`, `temperatureAvgPeriod`, `humidityAvgPeriod` and `averagesInfo`. New preferences **Calculate averages** and **Averaging period (days)** (2–365, default 7); new command **Reset Averages**. |
+| 1.3.1 | 2026-11-17 | Removed the experimental **Try Reset Device Min Max** command: on firmware 1.0.2 the sensor answers "write accepted" but keeps its own min/max unchanged, so they can only be reset with the button hold. |
+| 1.3.0 | 2026-11-17 | SNZB-02DR2: new attributes `Device Temp Avg` and `Device Humidity Avg` (FC11 `0x200A` / `0x200D`, previously logged as unexplained reference values). New experimental command **Try Reset Device Min Max**, to find out whether the sensor's own min/max can be reset over Zigbee. |
+| 1.2.1 | 2026-11-17 | Remote display: the highest temperature sent is now 98.9 (was 99.9); the screen shows `HHH` from 99.0 upward. Driver namespace changed from `v. 1.0.0` to `JohnFLand` (it now stays fixed across versions): update by importing or pasting into the existing driver, not by adding a new one. If you did add a new one, switch each device's **Type** to it, then delete the old driver. |
+| 1.2.0 | 2026-11-17 | SNZB-02DR2: new preference **Apply offsets in the sensor** writes the temperature and humidity offsets to the sensor's calibration (FC11 `0x2003` / `0x2004`), reads them back on every Save and Refresh, and adds in Hubitat only the part not yet confirmed by the sensor; turning it off writes 0 back. Confirmed on firmware 1.0.2: the sensor's screen and its Zigbee readings both include the calibration. `temperatureCalibration` (SNZB-02DR2 and SNZB-02M) now follows the hub's temperature scale (0.1 in °F, 0.01 in °C); it was always °C, so check any rule on an SNZB-02M that uses it. Remote display: temperatures of 100 or more in the LCD's unit, which the screen shows as `HHH`, are sent as 99.9 (lowered to 98.9 in 1.2.1). |
+| 1.1.0 | 2026-11-16 | SNZB-02DR2 remote display: new commands **Set Remote Temperature**, **Set Remote Humidity** and **Remote Display Off**; new attributes `remoteDisplay`, `ext1Temperature`, `ext1Humidity`, `ext2Temperature`, `ext2Humidity`; new preference **Remote display method**. Method chosen by firmware (older method before 1.0.5, remote sources from 1.0.5), automatic re-send when the sensor wakes, and exact tenths on a °F LCD. The Identify message sent by the SNZB-02DR2's button is now recognised instead of being logged as an unhandled cluster. Thanks to temes33 for the discovery. |
+| 1.0.0 | 2026-11-07 | First release. Merges the separate drivers SNZB-02x 1.5.0, SNZB-02DR2 1.13.0 and SNZB-02M 2.4.0, with the model detected from the device. Differences from those drivers: comfort attributes are numbers on every model (`comfortTempMin/Max`, `comfortHumidityMin/Max`; the SNZB-02DR2 driver used text values and `comfortHumiMin/Max`); dew point and VPD are calculated for every model and can be turned off; the Configure command, sanity checks on raw readings and logging of write responses apply to every model; `temperatureCalibration` and `humidityCalibration` are published whenever the sensor sends them; humidity is shown in whole percent on every model (the SNZB-02M driver showed 0.1 %); default values on the preferences page follow the selected temperature unit. |
 
 ---
 
-## Clickable State Cells
+## License
 
-State cells are interactive in the ON, OFF, and Unknown tables when Maker API credentials are configured for the relevant hub. They work as follows:
-
-- **ON / OFF tables:** the entire State cell is a click target. Hover over it to see a subtle highlight; the cursor changes to a pointer. Click to send the opposite command.
-- **Unknown table:** the State cell contains **→ ON** and **→ OFF** mini-buttons since neither direction can be inferred.
-- The command is sent via the Maker API using `fetch()` — the page does not reload.
-- The cell (or button) shows **…** while the command is in flight.
-- On success, the State cell's label and color update immediately (optimistic update).
-- On failure (network error or non-200 HTTP status), a brief error indicator appears and the original state is restored.
-
-State cells are not interactive in the Health/Activity table — that table is for monitoring only. The Private Boolean FALSE table has its own clickable PB State cells with different mechanics (OAuth callback on Hub #1, Private Boolean Manager relay for remote hubs) — see [Rules with Private Boolean FALSE Table](#rules-with-private-boolean-false-table).
-
----
-
-## Sort & Display Options
-
-Expand the **Sort & Display Options** section at the bottom of the page to configure default sort behaviour, filtering, and display preferences.
-
-### App Name
-
-A **Rename this app** field appears at the top of the section. Enter a custom label to distinguish this instance from others (the label is shown in the Hubitat Apps list).
-
-### Per-Table Sort Settings
-
-Each table has independent **Sort by** and **Order** controls. The sort applied here is the default when the page first loads. Click any column header in a table to re-sort interactively; this does not change the saved default.
-
-**ON / OFF tables:** sortable by Device Name, Room, or Hub.  
-**Unknown State table:** same columns.  
-**Lock State table:** sortable by Device Name, Room, Hub, Lock State, or Battery %.  
-**Contact Sensor table:** sortable by Device Name, Room, Hub, Contact State, or Battery %.  
-**Health / Activity table:** sortable by Device Name, Room, Hub, HE Status, or Last Activity.  
-**Private Boolean FALSE table:** sortable by Rule Name, App Type, Hub, PB State, or Last Run.
-
-### Show/Hide Tables
-
-| Control | Effect |
-|---|---|
-| **Show Unknown State table?** | Hides or shows the Unknown table. Default: on. |
-| **Show Lock State table?** | Hides or shows the Lock State table. Default: on. |
-| **Show Contact Sensor table?** | Hides or shows the Contact Sensor table. Default: on. |
-| **Show only sensors currently OPEN?** | When on (default), the Contact Sensor table lists only open sensors; when off, all selected sensors appear with their state. |
-| **Show Health/Activity Monitor table?** | Hides or shows the Health table. Default: on. |
-| **Show Rules with Private Boolean FALSE table for Hub 1 / 2 / 3** | Three independent per-hub toggles. Each controls both whether that hub is **scanned** during PB scanning and whether its cached rows are **shown** in the combined table. Default: on. When all three are off, the PB table and the Scan PB FALSE Rules buttons are hidden. |
-| **Hub #2 / #3 Private Boolean Manager app ID & access token** | Optional per-hub credentials (shown when the hub is enabled and its PB control is on) that make that remote hub's PB State cells clickable — clicks are relayed to Private Boolean Manager's `/setPB` endpoint on that hub. See [Rules with Private Boolean FALSE Table](#rules-with-private-boolean-false-table). |
-
-### Activity Threshold
-
-**Flag devices with last activity more than X hours ago** — default 24 hours. Any health-monitored device whose most recent event is older than this value is flagged as Late Activity in the Health table. Set to a larger value (e.g. 72 hours) to reduce noise for devices that naturally report infrequently.
-
-### Filtering Options
-
-| Control | Effect |
-|---|---|
-| **Exclude virtual devices** | Omits virtual devices from the ON, OFF, Unknown, and Health/Activity tables. "Virtual" is identified by driver type name containing "virtual", or device name starting with "VD " (a naming convention for virtual devices). Lock and contact sensor devices are exempt — they are always shown regardless of this setting because they are individually selected rather than bulk-included. |
-| **Exclude devices in the "System" room** | Omits devices assigned to the Hubitat room named "System" from all tables. |
-
-### Display Options
-
-| Control | Effect |
-|---|---|
-| **Show HSM status above the tables?** | Shows or hides the HSM Status and HSM Alert badges at the top of the report area. Default: on. Has no effect if HSM is not installed. |
-| **Verify the HSM alert state against the hub on every refresh?** | Cross-checks the alert badge against the hub's own pages on each Refresh — detects missed alerts and auto-clears stale ones. Default: on. Requires Hub Login Security OFF on Hub #1. See the HSM section. |
-| **HSM app ID** | Optional but recommended — the number in HSM's URL (e.g. `/installedapp/configure/2`). When set, live alert text is read straight from the HSM app page. |
-| **Also show HSM status for Hub #2 / #3?** | Per-hub toggles (shown only for enabled hubs) that add that hub's HSM status and alert lines under Hub #1's. Default: off. Each reveals an optional per-hub HSM app ID field. See [Remote HSM](#remote-hsm--hubs-2-and-3). |
-| **Show extra details in section headers?** | Appends monitored device counts to each hub section header (e.g. "Hub #3 – Office — 15 ON / 15 OFF / 4 Lock / 47 Health monitored"). |
-| **Enable debug logging?** | Writes detailed log entries to the Hubitat log for each device checked during a refresh. Useful for diagnosing missing or incorrect data. Disable when not troubleshooting — it generates a large number of log entries for hubs with many selected devices. |
-
-### Hide Columns
-
-Eight toggle buttons at the bottom of Sort & Display Options control column visibility. They appear in the same left-to-right order as the columns they control.
-
-| Button | Applies to | Columns hidden |
-|---|---|---|
-| **Room** | All tables with a Room column (the PB table has none) | Room column |
-| **Hub** | All seven tables | Hub column |
-| **Issue** | Health / Activity table | Issue column |
-| **HE Status** | Health / Activity table | HE Status column |
-| **Health Status** | Health / Activity table | Health Status column |
-| **Last Activity** | Health / Activity table | Last Activity column |
-| **Battery %** | Health / Activity table | Battery % column |
-| **Last Battery** | Health / Activity table | Last Battery column |
-
-The six Health-table-specific buttons appear only when the Health / Activity table is enabled.
-
-Click a button to hide the column; click again to show it. The button text is struck through while the column is hidden. On desktop (viewport > 767 px), visibility choices are saved in the browser's local storage and restored automatically on every subsequent page load — no Refresh or Save required.
-
-**Room column on mobile:** The Room column is automatically hidden on portrait phones and shown in landscape — the Hide Columns toggle has no persistent effect on phone-sized screens. See [Mobile Support](#mobile-support) for details. The Health / Activity table has a horizontal scroll wrapper so all of its columns remain accessible at their minimum widths on any screen size.
-
-### Notes / User Guide
-
-A collapsible **Notes / User Guide** section appears below Sort & Display Options and contains a condensed version of this guide for quick in-app reference.
-
----
-
-## Typical First-Time Setup Sequence
-
-1. Install the app on Hub #1 via **Apps → + Add User App**.
-2. Open the app. The seven report tables appear (empty) and configuration sections are below.
-3. Expand **Hub #1**. Set a friendly label. Select devices for ON, OFF, lock, contact, and health monitoring.
-4. To enable clickable State cells and health Select All/Clear All on Hub #1: toggle **Show / Edit Toggle Command & Health Monitor Settings**, enter Maker API credentials for Hub #1, then use the **Hub #1 Health Device List Actions** dropdown to Load and Select All.
-5. For each remote hub: expand its section, toggle **Enable**, expand **Connection Settings**, enter IP/App ID/Token, collapse Connection Settings, then choose **⟳ Load / Reload Device List** from the Actions dropdown. After loading, use Select All actions and adjust individual selections as needed (including lock and contact sensor devices).
-6. Expand **Sort & Display Options**. Set activity threshold, sort preferences, and filtering options. Use **Hide Columns** to control which columns appear on desktop — Room and Hub apply to all tables; the six Health-specific buttons apply to the Health table only. Room visibility on phones is managed automatically by orientation (see Mobile Support).
-7. *(Optional)* In Sort & Display Options, set the **HSM app ID** for live alert text on Hub #1, and enable **Also show HSM status for Hub #2 / #3** if those hubs run HSM (remember to enable the HSM toggle in their Maker API apps — it is needed both for the status line and for the remote **Cancel HSM Alerts** button).
-8. *(Optional)* Review the three **Show Rules with Private Boolean FALSE table for Hub 1 / 2 / 3** controls (on by default) — only checked hubs are PB-scanned. To make remote hubs' PB State cells clickable, enter each hub's Private Boolean Manager app ID and access token. PB scanning requires Hub Login Security OFF on each scanned hub. The first PB scan starts automatically once at least one hub's PB control is enabled.
-9. Click **Refresh Table** at the top of the page to run the first full report.
-10. Click **Done** to save.
-
----
-
-## Maintenance
-
-**Upgrading the app code:** Paste the new version over the existing app code (Apps Code → open the app → replace → Save), then open the app instance and click **Done** once so subscriptions and settings re-initialize. When upgrading across version 1.56, run **⟳ Load / Reload Device List** on each remote hub once to populate the new contact sensor selector. When upgrading across version 1.60, the Private Boolean FALSE table appears and its first scan starts automatically on the next page open (its per-hub controls default to on; a pre-1.72 single PB visibility setting is migrated to the per-hub controls automatically). When upgrading across version 1.78, the old hidden Hub #1 health list (previously populated by **Select All**) is retired and removed automatically on the first **Done** — the capability picker now governs everything it can show. If you had relied on **Select All** to pull in a device the picker cannot display (e.g. an Actuator-only driver such as MQTT Display Publisher), re-add that one device by ID in the new **Additional health-monitor device IDs — Hub #1** field. When upgrading to 1.79, nothing needs migrating: the **Cancel HSM Alerts** buttons appear automatically the next time an alert is active, and **Clear HSM Alert Display** is now shown only when the alert state could not be verified.
-
-**Adding devices to a remote hub's report:** Add the device in the remote hub's Maker API app, then run **⟳ Load / Reload** from the Actions dropdown. The new device will appear in the pickers.
-
-**Removing a device from monitoring:** Deselect it in the appropriate picker.
-
-**Hub goes offline:** The report shows a red warning banner for that hub and omits its devices from the tables. The remaining hubs still report normally.
-
-**"No usable device data" warnings:** If a hub's Maker API returns a device list with no usable entries, the app treats it as a data outage rather than an empty selection — the affected fetchers stop and a visible per-hub warning names the likely cause (typically a recent platform/beta update) instead of rendering clean-but-empty tables. A genuinely empty selection still reports normally.
-
-**Deleted devices in a Maker API list:** A device that was deleted while still selected in a hub's Maker API app can appear as a literal null entry in that hub's device list. These entries are skipped automatically (with a log entry noting how many); re-save that hub's Maker API app to clean them up.
-
-**Platform compatibility:** As of 1.77 the app works on both standard firmware and the 2026 beta platform builds that hand back Maker API JSON responses pre-parsed — no rollback is required.
-
-**Refresh cadence:** The tables are only updated when you click **Refresh Table** or revisit the app page. The app does not poll on a schedule, with one exception: while a PB scan is running, the page auto-refreshes every 30 seconds until the scan completes.
+Licensed under the Apache License, Version 2.0.
