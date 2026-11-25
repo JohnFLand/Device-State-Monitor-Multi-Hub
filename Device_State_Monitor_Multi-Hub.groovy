@@ -58,6 +58,11 @@ FEATURES:
       Maker API" link button so newly added hub devices aren't missed: a
       device must be exposed in Maker API on its hub BEFORE it can appear
       in any picker here, even after Load/Reload.
+    * Contact Sensor table supports tilt sensors (1.80): a selected sensor
+      that reports no "contact" value (e.g. Third Reality tilt sensors,
+      whose driver declares ContactSensor but only sends "acceleration")
+      shows its acceleration state instead — "active" is flagged in red
+      like "open", "inactive" is shown in green like "closed".
 */
 
 import hubitat.helper.RMUtils
@@ -97,7 +102,7 @@ import groovy.transform.Field
 @Field static String    pbToggleRuleId           = null   // serializes PB click actions against scans / other clicks
 
 definition(
-    name:         "Device State Monitor Multi-Hub 1.79",
+    name:         "Device State Monitor Multi-Hub 1.80",
     namespace:    "John Land",
     author:       "John Land via Claude AI and ChatGPT",
     description:  "Reports device states, health/activity, and FALSE Private Booleans across up to three hubs",
@@ -240,7 +245,7 @@ def mainPage() {
                 title: "Select lock-monitored devices (${h1LockSelCount} selected)",
                 submitOnChange: true, multiple: true, required: false
 
-            paragraph("<hr><b>Devices to monitor for contact state</b> <small>(sensors currently OPEN are flagged)</small>")
+            paragraph("<hr><b>Devices to monitor for contact state</b> <small>(sensors currently OPEN — or ACTIVE, for tilt sensors — are flagged)</small>")
             def h1ContactSelCount = (devsContact ?: []).size()
             input "devsContact", "capability.contactSensor",
                 title: "Select contact-monitored devices (${h1ContactSelCount} selected)",
@@ -583,7 +588,7 @@ def mainPage() {
                 defaultValue: true, submitOnChange: true
             if (settings["showContactTable"] != false) {
                 input "contactOpenOnly", "bool",
-                    title: "Show only sensors currently OPEN? (off = show all selected sensors with their state)",
+                    title: "Show only sensors currently OPEN (or ACTIVE, for tilt sensors)? (off = show all selected sensors with their state)",
                     defaultValue: true, submitOnChange: true
                 input "sortByContact",    "enum", title: "Sort by", options: ["displayName": "Device Name", "room": "Room", "hub": "Hub", "contactVal": "Contact State", "battery": "Battery %"], defaultValue: "displayName", submitOnChange: true
                 input "sortOrderContact", "enum", title: "Order",   options: ["asc": "Ascending", "desc": "Descending"],                                                     defaultValue: "asc",          submitOnChange: true
@@ -734,7 +739,10 @@ def mainPage() {
                 "(shown in red), with the heading reporting \"N open of M monitored\"; a Sort &amp; Display option switches to showing " +
                 "every selected sensor with its state (open in red, closed in green). Hub #1 uses a capability picker; " +
                 "Hubs #2 and #3 use a contact sensor selector populated by Load / Reload " +
-                "(run <b>Load / Reload Device List</b> once after upgrading to 1.56 to populate it).</li>" +
+                "(run <b>Load / Reload Device List</b> once after upgrading to 1.56 to populate it). " +
+                "Tilt sensors whose driver reports no <i>contact</i> value (e.g. Third Reality tilt sensors, which only send " +
+                "<i>acceleration</i>) show their acceleration state instead: <b>active</b> (tilted) is treated like open (red, " +
+                "and listed in open-only mode), <b>inactive</b> like closed (green); hover the state for a note.</li>" +
                 "<li><b>Health / Activity Monitor</b> — any health-monitored device that is OFFLINE, INACTIVE, NOT PRESENT, " +
                 "or whose last activity exceeds the configured threshold. Columns: Device Name, Room, Hub, HE Status, " +
                 "Issue, HE Status, Health Status, Last Activity, Battery %, Last Battery.</li>" +
@@ -2389,10 +2397,20 @@ private Map collectAllDeviceStates() {
     }
     // Contact pool – Hub #1 (hand-picked like locks, so the virtual-device
     // exclusion filter is intentionally not applied)
+    // Tilt sensors (e.g. Third Reality) may declare ContactSensor but only ever
+    // report "acceleration" (active/inactive); fall back to it when no contact
+    // value exists (1.80).
     (devsContact ?: []).findAll(filterLock).each { dev ->
+        String ctVal = null
+        String accVal = null
+        try { ctVal  = dev.currentValue("contact")?.toString()?.toLowerCase() } catch (ignored) {}
+        if (!ctVal) {
+            try { accVal = dev.currentValue("acceleration")?.toString()?.toLowerCase() } catch (ignored) {}
+        }
         contactPool << [displayName: dev.displayName, room: resolveLocalRoom(dev, roomMap),
                         hub: hub1LabelVal, linkUrl: "/device/edit/${dev.id}",
-                        contactVal: dev.currentValue("contact")?.toString()?.toLowerCase() ?: "unknown",
+                        contactVal: ctVal ?: accVal ?: "unknown",
+                        contactSource: (!ctVal && accVal) ? "acceleration" : "contact",
                         battery: dev.currentValue("battery")?.toString() ?: "n/a"]
     }
     // Health pool – Hub #1
@@ -2516,7 +2534,8 @@ private Map collectAllDeviceStates() {
             if (ctWarn && !warnings.contains(ctWarn)) warnings << ctWarn
             contactPool.addAll(ctEntries.collect { e ->
                 [displayName: e.displayName, room: e.room, hub: hubLabel,
-                 linkUrl: e.linkUrl, contactVal: e.contactVal, battery: e.battery ?: "n/a"]
+                 linkUrl: e.linkUrl, contactVal: e.contactVal,
+                 contactSource: e.contactSource ?: "contact", battery: e.battery ?: "n/a"]
             })
         }
 
@@ -2761,31 +2780,25 @@ private List fetchRemoteContactStates(String ip, String appId, String token,
                 )) return
                 if (excludeSysRoom && (dev.room ?: "").toString() == "System") return
 
-                // Try to read contact attribute from bulk response
-                def contactVal = null
+                // Try to read contact (or, for tilt sensors that only report
+                // acceleration, the acceleration attribute) from bulk response
                 def attrsField = dev.attributes
-                if (attrsField instanceof List) {
-                    def ct = attrsField.find { a -> a?.name?.toString() == "contact" }
-                    contactVal = ct?.currentValue?.toString()?.toLowerCase()
-                } else if (attrsField instanceof Map) {
-                    contactVal = attrsField["contact"]?.toString()?.toLowerCase()
-                }
+                def contactVal = remoteAttrValue(attrsField, "contact")
+                def accelVal   = remoteAttrValue(attrsField, "acceleration")
 
-                // Fall back to per-device fetch if not in bulk response
-                if (contactVal == null) {
+                // Fall back to per-device fetch if neither is in bulk response
+                if (contactVal == null && accelVal == null) {
                     try {
                         def devData = fetchJson("http://${ip}/apps/api/${appId}/devices/${devId}?access_token=${token}", 5)
                         def da = devData?.attributes
-                        if (da instanceof List) {
-                            def ct2 = da.find { a -> a?.name?.toString() == "contact" }
-                            contactVal = ct2?.currentValue?.toString()?.toLowerCase()
-                        } else if (da instanceof Map) {
-                            contactVal = da["contact"]?.toString()?.toLowerCase()
-                        }
+                        contactVal = remoteAttrValue(da, "contact")
+                        accelVal   = remoteAttrValue(da, "acceleration")
                     } catch (Exception fe) {
                         if (enableLogging) log.warn "${hubLabel} device ${devId}: contact fallback fetch failed — ${fe.message}"
                     }
                 }
+                def contactSource = (contactVal == null && accelVal != null) ? "acceleration" : "contact"
+                if (contactVal == null) contactVal = accelVal
 
                 def ctBatteryVal = "n/a"
                 if (attrsField instanceof List) {
@@ -2799,6 +2812,7 @@ private List fetchRemoteContactStates(String ip, String appId, String token,
                             room       : (dev.room ?: "—").toString(),
                             linkUrl    : "http://${ip}/device/edit/${devId}",
                             contactVal : contactVal ?: "unknown",
+                            contactSource: contactSource,
                             battery    : ctBatteryVal]
         }
     } catch (java.net.SocketTimeoutException e) {
@@ -3896,10 +3910,13 @@ private String buildLockTable(List devices, String title, String tableId, String
 
 private String buildContactTable(List devices, String tableId, String headerColor,
                                  String sortBy, String sortOrder, boolean openOnly) {
+    // "active" (tilt sensors reporting acceleration only) is flagged like "open".
+    def flaggedVals = ["open", "active"] as Set
     def monitored = devices.size()
-    def openCount = devices.count { (it.contactVal ?: "") == "open" }
-    def shown     = openOnly ? devices.findAll { (it.contactVal ?: "") == "open" } : devices
+    def openCount = devices.count { flaggedVals.contains(it.contactVal ?: "") }
+    def shown     = openOnly ? devices.findAll { flaggedVals.contains(it.contactVal ?: "") } : devices
     def count     = shown.size()
+    def openWord  = devices.any { it.contactSource == "acceleration" } ? "open/active" : "open"
 
     def sortColIdx = 0
     switch (sortBy) {
@@ -3926,10 +3943,10 @@ private String buildContactTable(List devices, String tableId, String headerColo
     def titleStr
     if (openOnly) {
         titleStr = (openCount > 0)
-            ? "<b>Open Contact Sensors</b>: <span style='color:#cc0000;'>${openCount} open</span> of ${monitored} monitored."
-            : "<b>Open Contact Sensors</b>: <span style='color:#1a7a1a;'>None open</span> (${monitored} monitored)."
+            ? "<b>Open Contact Sensors</b>: <span style='color:#cc0000;'>${openCount} ${openWord}</span> of ${monitored} monitored."
+            : "<b>Open Contact Sensors</b>: <span style='color:#1a7a1a;'>None ${openWord}</span> (${monitored} monitored)."
     } else {
-        def openNote = openCount > 0 ? " <span style='color:#cc0000;'>(${openCount} open)</span>" : ""
+        def openNote = openCount > 0 ? " <span style='color:#cc0000;'>(${openCount} ${openWord})</span>" : ""
         titleStr = "<b>Contact Sensor State</b>: ${monitored} device${monitored == 1 ? '' : 's'}${openNote}."
     }
     def html = "<h4 style='margin-bottom:4px;'>${titleStr}</h4><br>"
@@ -3949,9 +3966,12 @@ private String buildContactTable(List devices, String tableId, String headerColo
 
         shown.each { it ->
             def cv = it.contactVal?.toLowerCase() ?: "unknown"
-            def contactColor = (cv == "open")   ? "color:red;font-weight:bold;"   :
-                               (cv == "closed") ? "color:green;font-weight:bold;" :
-                                                  "color:#888;"
+            def contactColor = (cv in ["open", "active"])     ? "color:red;font-weight:bold;"   :
+                               (cv in ["closed", "inactive"]) ? "color:green;font-weight:bold;" :
+                                                                "color:#888;"
+            def stateTip = (it.contactSource == "acceleration")
+                ? " title='Tilt sensor: no contact attribute reported, showing acceleration (active = tilted)'"
+                : ""
             def battStr = it.battery?.toString() ?: "n/a"
             def battColor = ""
             if (battStr != "n/a") {
@@ -3964,7 +3984,7 @@ private String buildContactTable(List devices, String tableId, String headerColo
             html += "<td><a href='${it.linkUrl}' target='_blank'>${it.displayName}</a></td>"
             html += "<td class='dsm-col-room'>${it.room}</td>"
             html += "<td class='dsm-col-hub hub-col'>${it.hub}</td>"
-            html += "<td class='state-col' style='${contactColor}'>${cv}</td>"
+            html += "<td class='state-col' style='${contactColor}'${stateTip}>${cv}</td>"
             html += "<td style='text-align:center;${battColor}'>${battStr}</td>"
             html += "</tr>"
         }
@@ -4688,6 +4708,20 @@ private boolean hasSwitchCapability(def caps) {
                                       : c?.toString()?.toLowerCase() ?: ""
         name in switchCaps
     }
+}
+
+// Current value of one attribute from a Maker API device "attributes" field,
+// which can arrive as a List of [name:, currentValue:] maps or as a flat Map.
+// Returns a lower-cased string, or null when the attribute is absent/empty.
+private String remoteAttrValue(def attrsField, String attrName) {
+    def v = null
+    if (attrsField instanceof List) {
+        v = attrsField.find { a -> a?.name?.toString() == attrName }?.currentValue
+    } else if (attrsField instanceof Map) {
+        v = attrsField[attrName]
+    }
+    String s = v?.toString()?.trim()?.toLowerCase()
+    return (s && s != "null") ? s : null
 }
 
 private boolean hasContactCapability(def caps) {
